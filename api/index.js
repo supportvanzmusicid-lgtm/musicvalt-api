@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.json({ message: 'YouTube Music API (YTMusic Style) Aktif!' });
+  res.json({ message: 'YouTube Music API (HD Thumbnail) Aktif!' });
 });
 
 app.get('/api/search', async (req, res) => {
@@ -15,7 +15,6 @@ app.get('/api/search', async (req, res) => {
       return res.status(400).json({ error: 'Parameter "q" wajib diisi' });
     }
 
-    // Menggunakan endpoint internal YouTube Music (mirip cara kerja ytmusicapi)
     const response = await axios.post('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
       context: {
         client: {
@@ -26,7 +25,7 @@ app.get('/api/search', async (req, res) => {
         }
       },
       query: query,
-      params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA==' // Filter khusus SONGS/Lagu resmi dari YouTube Music
+      params: 'EgWKAQIIAWoKEAkQBRAKEAMQBA==' // Filter khusus lagu/songs resmi
     }, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -35,7 +34,6 @@ app.get('/api/search', async (req, res) => {
       }
     });
 
-    // Parsing struktur data YouTube Music
     const sections = response.data?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
     
     let rawSongs = [];
@@ -54,10 +52,8 @@ app.get('/api/search', async (req, res) => {
       try {
         const videoId = renderer.playlistItemData?.videoId || renderer.flexColumns[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs[0]?.navigationEndpoint?.watchEndpoint?.videoId;
         
-        // Judul Lagu
         const title = renderer.flexColumns[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs[0]?.text || 'Unknown Title';
 
-        // Artist & Album (Biasanya ada di kolom fleksibel kedua)
         const secondaryRuns = renderer.flexColumns[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
         let artist = 'Unknown Artist';
         let album = null;
@@ -69,10 +65,16 @@ app.get('/api/search', async (req, res) => {
           }
         }
 
-        // Thumbnail / Cover
-        const thumbnails = renderer.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+        // Ambil thumbnail mentah lalu ubah parameternya agar jadi resolusi HD (w1080-h1080)
+        let thumbnails = renderer.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
+        thumbnails = thumbnails.map(thumb => {
+          if (thumb.url) {
+            // Ubah w60-h60 atau ukuran kecil lainnya menjadi w1080-h1080 agar jernih
+            thumb.url = thumb.url.replace(/=w\d+.*?(-l\d+)?(-rj)?$/, '=w1080-h1080-l90-rj');
+          }
+          return thumb;
+        });
 
-        // Durasi
         const duration = renderer.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text?.runs[0]?.text || '0:00';
 
         if (!videoId) return null;
