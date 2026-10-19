@@ -25,38 +25,54 @@ app.get('/api/search', async (req, res) => {
 
     const yt = await getYT();
     
-    // Pencarian khusus di YouTube Music dengan filter lagu (songs)
-    const searchResults = await yt.music.search(query, { type: 'song' });
+    // Gunakan pencarian musik secara umum
+    const searchResults = await yt.music.search(query);
     
-    // Mengambil item dari hasil pencarian lagu YouTube Music
-    const items = searchResults.songs?.contents || searchResults.contents || [];
+    // Ambil semua kemungkinan data dari berbagai rak YouTube Music (songs, contents, videos, dll)
+    let rawItems = [];
+    if (searchResults.songs?.contents) {
+      rawItems = searchResults.songs.contents;
+    } else if (searchResults.contents) {
+      rawItems = searchResults.contents;
+    } else if (searchResults.videos) {
+      rawItems = searchResults.videos;
+    }
 
-    const formattedSongs = items
-      .filter(item => item.id && item.title)
+    // Jika masih kosong, ambil dari pencarian umum utama
+    if (rawItems.length === 0) {
+      const general = await yt.search(query, { type: 'video' });
+      rawItems = general.videos || general.contents || [];
+    }
+
+    const formattedSongs = rawItems
+      .filter(item => (item.id || item.video_id) && (item.title || item.name))
       .map((item) => {
-        // Judul lagu
-        let titleText = typeof item.title === 'string' ? item.title : (item.title?.text || 'Unknown Title');
+        let titleText = 'Unknown Title';
+        if (typeof item.title === 'string') {
+          titleText = item.title;
+        } else if (item.title?.text) {
+          titleText = item.title.text;
+        } else if (typeof item.name === 'string') {
+          titleText = item.name;
+        }
 
-        // Nama artis (mendukung artis utama atau rilisan - Topic)
         let artistName = 'Unknown Artist';
         if (item.artists && Array.isArray(item.artists)) {
           artistName = item.artists.map(a => a.name).join(', ');
         } else if (item.author?.name) {
           artistName = item.author.name;
+        } else if (item.authors?.[0]?.name) {
+          artistName = item.authors[0].name;
         }
 
-        // Album & Durasi
-        let albumName = item.album?.name || null;
         let durationText = item.duration?.text || item.duration || '0:00';
-
-        // Thumbnail / Cover lagu resmi
-        let thumbnails = item.thumbnails || item.thumbnail?.contents || [];
+        let thumbnails = item.thumbnails || item.thumbnail?.contents || item.thumbnail || [];
 
         return {
-          id: item.id,
+          id: item.id || item.video_id,
           title: titleText,
           artist: artistName,
-          album: albumName,
+          album: item.album?.name || null,
           duration: durationText,
           thumbnail: thumbnails
         };
@@ -66,29 +82,6 @@ app.get('/api/search', async (req, res) => {
       success: true,
       total: formattedSongs.length,
       results: formattedSongs
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.get('/api/play', async (req, res) => {
-  try {
-    const videoId = req.query.id;
-    if (!videoId) {
-      return res.status(400).json({ error: 'Parameter "id" wajib diisi' });
-    }
-
-    const yt = await getYT();
-    const info = await yt.getInfo(videoId);
-
-    res.json({
-      success: true,
-      id: videoId,
-      title: info.basic_info.title,
-      artist: info.basic_info.author,
-      duration: info.basic_info.duration,
-      thumbnails: info.basic_info.thumbnail
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
