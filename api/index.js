@@ -6,7 +6,6 @@ app.use(express.json());
 
 let ytPromise = null;
 
-// Inisialisasi YouTubeJS sekali saat fungsi dipanggil pertama kali
 async function getYT() {
   if (!ytPromise) {
     ytPromise = Innertube.create({
@@ -17,7 +16,6 @@ async function getYT() {
   return ytPromise;
 }
 
-// Endpoint Search: /api/search?q=nama_lagu
 app.get('/api/search', async (req, res) => {
   try {
     const query = req.query.q;
@@ -37,7 +35,6 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// Endpoint Play/Info: /api/play?id=video_id
 app.get('/api/play', async (req, res) => {
   try {
     const videoId = req.query.id;
