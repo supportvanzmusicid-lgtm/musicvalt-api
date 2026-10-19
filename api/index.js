@@ -8,10 +8,7 @@ let ytInstance = null;
 
 async function getYT() {
   if (!ytInstance) {
-    ytInstance = await Innertube.create({
-      // Menggunakan client WEB agar lebih stabil di serverless
-      client: 'WEB' 
-    });
+    ytInstance = await Innertube.create({ client: 'WEB' });
   }
   return ytInstance;
 }
@@ -21,12 +18,14 @@ app.get('/api/search', async (req, res) => {
     const query = req.query.q || 'tulus';
     const yt = await getYT();
     
-    // Ambil data mentah tanpa filter ribet dulu
-    const result = await yt.music.search(query);
+    const searchResults = await yt.music.search(query);
+    
+    // Ambil array konten pertama untuk di-debug
+    let items = searchResults.songs?.contents || searchResults.contents || [];
 
     res.json({
       success: true,
-      raw_structure: result // Ini akan menampilkan isi asli dari YouTube Music
+      sample_item: items[0] || "Tidak ada item ditemukan"
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
