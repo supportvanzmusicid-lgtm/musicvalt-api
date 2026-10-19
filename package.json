@@ -1,9 +1,6 @@
 {
-  "name": "ytmusic-vercel-api",
-  "version": "1.0.0",
-  "main": "api/index.js",
   "dependencies": {
     "express": "^4.18.2",
-    "youtubei.js": "^10.0.0"
+    "axios": "^1.6.0"
   }
 }
