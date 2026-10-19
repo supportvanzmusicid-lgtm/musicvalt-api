@@ -15,17 +15,60 @@ async function getYT() {
 
 app.get('/api/search', async (req, res) => {
   try {
-    const query = req.query.q || 'tulus';
+    const query = req.query.q;
+    if (!query) {
+      return res.status(400).json({ error: 'Parameter "q" wajib diisi' });
+    }
+
     const yt = await getYT();
     
-    const searchResults = await yt.music.search(query);
-    
-    // Ambil array konten pertama untuk di-debug
-    let items = searchResults.songs?.contents || searchResults.contents || [];
+    // Gunakan pencarian umum standar YouTube (lebih stabil dan selalu ada thumbnail/artis)
+    const searchResults = await yt.search(query, { type: 'video' });
+    const items = searchResults.videos || searchResults.contents || [];
+
+    const formattedSongs = items
+      .filter(item => item.id && item.title)
+      .map((item) => {
+        // Ambil judul dengan aman
+        let titleText = 'Unknown Title';
+        if (typeof item.title === 'string') {
+          titleText = item.title;
+        } else if (item.title?.text) {
+          titleText = item.title.text;
+        }
+
+        // Ambil nama artis / author
+        let artistName = 'Unknown Artist';
+        if (item.author?.name) {
+          artistName = item.author.name;
+        } else if (item.authors?.[0]?.name) {
+          artistName = item.authors[0].name;
+        }
+
+        // Ambil durasi
+        let durationText = item.duration?.text || item.duration || '0:00';
+
+        // Ambil URL Thumbnail / Cover langsung dalam bentuk array / string terbaik
+        let thumbnails = [];
+        if (item.thumbnails && Array.isArray(item.thumbnails)) {
+          thumbnails = item.thumbnails;
+        } else if (item.thumbnail?.contents) {
+          thumbnails = item.thumbnail.contents;
+        }
+
+        return {
+          id: item.id,
+          title: titleText,
+          artist: artistName,
+          duration: durationText,
+          thumbnail: thumbnails
+        };
+      });
 
     res.json({
       success: true,
-      sample_item: items[0] || "Tidak ada item ditemukan"
+      total: formattedSongs.length,
+      results: formattedSongs
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
