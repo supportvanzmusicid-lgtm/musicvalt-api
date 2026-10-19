@@ -16,12 +16,10 @@ async function getYT() {
   return ytPromise;
 }
 
-// Endpoint pesan selamat datang di halaman utama (opsional)
 app.get('/', (req, res) => {
   res.json({ message: 'API YouTube Music Aktif!' });
 });
 
-// Endpoint Search Musik
 app.get('/api/search', async (req, res) => {
   try {
     const query = req.query.q;
@@ -31,20 +29,27 @@ app.get('/api/search', async (req, res) => {
 
     const yt = await getYT();
     
-    // Menggunakan pencarian khusus kategori Music / Song
-    const searchResults = await yt.music.search(query, { type: 'song' });
+    // Coba cari pakai yt.music.search
+    let searchResults = await yt.music.search(query, { type: 'song' });
+    let rawContents = searchResults.songs?.contents || searchResults.contents || [];
 
-    // Ekstrak dan format data lagu (Judul, Artis, Cover, ID Video, Durasi)
-    const formattedSongs = searchResults.songs?.contents?.map((item) => {
+    // Jika masih kosong, fallback ke pencarian umum YouTube biasa
+    if (rawContents.length === 0) {
+      const generalSearch = await yt.search(query, { type: 'video' });
+      rawContents = generalSearch.contents || [];
+    }
+
+    // Format data agar aman dibaca
+    const formattedSongs = rawContents.map((item) => {
       return {
-        id: item.id,
-        title: item.title,
-        artist: item.artists ? item.artists.map(a => a.name).join(', ') : 'Unknown Artist',
+        id: item.id || item.video_id,
+        title: item.title?.text || item.title || 'Unknown Title',
+        artist: item.artists ? item.artists.map(a => a.name).join(', ') : (item.author?.name || 'Unknown Artist'),
         album: item.album ? item.album.name : null,
-        duration: item.duration ? item.duration.text : null,
-        thumbnail: item.thumbnail ? item.thumbnail.contents : []
+        duration: item.duration?.text || item.duration || null,
+        thumbnail: item.thumbnails || item.thumbnail?.contents || []
       };
-    }) || [];
+    });
 
     res.json({
       success: true,
@@ -56,7 +61,6 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// Endpoint Play / Info Detail Lagu
 app.get('/api/play', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -68,12 +72,15 @@ app.get('/api/play', async (req, res) => {
     const info = await yt.getInfo(videoId);
 
     res.json({
+      success: key => key,
       success: true,
       id: videoId,
       title: info.basic_info.title,
       artist: info.basic_info.author,
       duration: info.basic_info.duration,
-      thumbnails: info.basic_info.thumbnail
+      thumbnails: info.basic_info.thumbnail,
+      // URL Streaming audio langsung (jika dibutuhkan untuk pemutar musik)
+      // streaming_data: info.streaming_data
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
