@@ -8,7 +8,11 @@ let ytInstance = null;
 
 async function getYT() {
   if (!ytInstance) {
-    ytInstance = await Innertube.create({ client: 'WEB' });
+    ytInstance = await Innertube.create({ 
+      client: 'YOUTUBE', // Menggunakan client YouTube utama agar filter musik lebih akurat
+      lang: 'id',
+      location: 'ID'
+    });
   }
   return ytInstance;
 }
@@ -22,14 +26,16 @@ app.get('/api/search', async (req, res) => {
 
     const yt = await getYT();
     
-    // Gunakan pencarian umum standar YouTube (lebih stabil dan selalu ada thumbnail/artis)
-    const searchResults = await yt.search(query, { type: 'video' });
-    const items = searchResults.videos || searchResults.contents || [];
+    // Cari khusus kategori lagu/musik resmi
+    const searchResults = await yt.music.search(query, { type: 'song' });
+    
+    // Ambil dari rak songs
+    const items = searchResults.songs?.contents || searchResults.contents || [];
 
     const formattedSongs = items
       .filter(item => item.id && item.title)
       .map((item) => {
-        // Ambil judul dengan aman
+        // Ambil judul lagu
         let titleText = 'Unknown Title';
         if (typeof item.title === 'string') {
           titleText = item.title;
@@ -37,29 +43,28 @@ app.get('/api/search', async (req, res) => {
           titleText = item.title.text;
         }
 
-        // Ambil nama artis / author
+        // Ambil nama artis resmi (biasanya mencakup artis utama atau - Topic)
         let artistName = 'Unknown Artist';
-        if (item.author?.name) {
+        if (item.artists && Array.isArray(item.artists)) {
+          artistName = item.artists.map(a => a.name).join(', ');
+        } else if (item.author?.name) {
           artistName = item.author.name;
-        } else if (item.authors?.[0]?.name) {
-          artistName = item.authors[0].name;
         }
+
+        // Ambil nama album jika dari rilisan resmi
+        let albumName = item.album?.name || null;
 
         // Ambil durasi
         let durationText = item.duration?.text || item.duration || '0:00';
 
-        // Ambil URL Thumbnail / Cover langsung dalam bentuk array / string terbaik
-        let thumbnails = [];
-        if (item.thumbnails && Array.isArray(item.thumbnails)) {
-          thumbnails = item.thumbnails;
-        } else if (item.thumbnail?.contents) {
-          thumbnails = item.thumbnail.contents;
-        }
+        // Ambil thumbnail cover lagu
+        let thumbnails = item.thumbnails || item.thumbnail?.contents || [];
 
         return {
           id: item.id,
           title: titleText,
           artist: artistName,
+          album: albumName,
           duration: durationText,
           thumbnail: thumbnails
         };
