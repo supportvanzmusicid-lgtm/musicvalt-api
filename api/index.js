@@ -29,27 +29,31 @@ app.get('/api/search', async (req, res) => {
 
     const yt = await getYT();
     
-    // Coba cari pakai yt.music.search
-    let searchResults = await yt.music.search(query, { type: 'song' });
-    let rawContents = searchResults.songs?.contents || searchResults.contents || [];
+    // Gunakan pencarian umum (general search) agar hasilnya lebih konsisten
+    const searchResults = await yt.search(query, { type: 'video' });
+    const rawContents = searchResults.contents || [];
 
-    // Jika masih kosong, fallback ke pencarian umum YouTube biasa
-    if (rawContents.length === 0) {
-      const generalSearch = await yt.search(query, { type: 'video' });
-      rawContents = generalSearch.contents || [];
-    }
+    // Filter dan petakan data dengan aman
+    const formattedSongs = rawContents
+      .filter(item => item.id && item.title) // Pastikan punya ID dan Judul
+      .map((item) => {
+        // Ambil thumbnail dengan resolusi terbaik jika ada
+        let thumbnails = [];
+        if (item.thumbnails) {
+          thumbnails = item.thumbnails;
+        } else if (item.thumbnail?.contents) {
+          thumbnails = item.thumbnail.contents;
+        }
 
-    // Format data agar aman dibaca
-    const formattedSongs = rawContents.map((item) => {
-      return {
-        id: item.id || item.video_id,
-        title: item.title?.text || item.title || 'Unknown Title',
-        artist: item.artists ? item.artists.map(a => a.name).join(', ') : (item.author?.name || 'Unknown Artist'),
-        album: item.album ? item.album.name : null,
-        duration: item.duration?.text || item.duration || null,
-        thumbnail: item.thumbnails || item.thumbnail?.contents || []
-      };
-    });
+        return {
+          id: item.id,
+          title: item.title?.text || item.title,
+          artist: item.author?.name || item.artists?.[0]?.name || 'Unknown Artist',
+          album: item.album?.name || null,
+          duration: item.duration?.text || item.duration || 'Live/Unknown',
+          thumbnail: thumbnails
+        };
+      });
 
     res.json({
       success: true,
@@ -72,15 +76,12 @@ app.get('/api/play', async (req, res) => {
     const info = await yt.getInfo(videoId);
 
     res.json({
-      success: key => key,
       success: true,
       id: videoId,
       title: info.basic_info.title,
       artist: info.basic_info.author,
       duration: info.basic_info.duration,
-      thumbnails: info.basic_info.thumbnail,
-      // URL Streaming audio langsung (jika dibutuhkan untuk pemutar musik)
-      // streaming_data: info.streaming_data
+      thumbnails: info.basic_info.thumbnail
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
