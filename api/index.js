@@ -4,16 +4,16 @@ const { Innertube } = require('youtubei.js');
 const app = express();
 app.use(express.json());
 
-let ytPromise = null;
+let ytInstance = null;
 
 async function getYT() {
-  if (!ytPromise) {
-    ytPromise = Innertube.create({
+  if (!ytInstance) {
+    ytInstance = await Innertube.create({
       lang: 'id',
       location: 'ID'
     });
   }
-  return ytPromise;
+  return ytInstance;
 }
 
 app.get('/', (req, res) => {
@@ -29,28 +29,42 @@ app.get('/api/search', async (req, res) => {
 
     const yt = await getYT();
     
-    // Gunakan pencarian umum (general search) agar hasilnya lebih konsisten
-    const searchResults = await yt.search(query, { type: 'video' });
-    const rawContents = searchResults.contents || [];
+    // Coba gunakan pencarian standar YouTube
+    const searchResults = await yt.search(query);
+    
+    // Ambil dari berbagai kemungkinan properti contents
+    const items = searchResults.videos || searchResults.contents || [];
 
-    // Filter dan petakan data dengan aman
-    const formattedSongs = rawContents
-      .filter(item => item.id && item.title) // Pastikan punya ID dan Judul
+    const formattedSongs = items
+      .filter(item => item.id && item.title)
       .map((item) => {
-        // Ambil thumbnail dengan resolusi terbaik jika ada
-        let thumbnails = [];
-        if (item.thumbnails) {
-          thumbnails = item.thumbnails;
-        } else if (item.thumbnail?.contents) {
-          thumbnails = item.thumbnail.contents;
+        // Ambil teks judul dengan aman
+        let titleText = 'Unknown Title';
+        if (typeof item.title === 'string') {
+          titleText = item.title;
+        } else if (item.title?.text) {
+          titleText = item.title.text;
         }
+
+        // Ambil nama artis / author
+        let artistName = 'Unknown Artist';
+        if (item.author?.name) {
+          artistName = item.author.name;
+        } else if (item.authors?.[0]?.name) {
+          artistName = item.authors[0].name;
+        }
+
+        // Ambil durasi
+        let durationText = item.duration?.text || item.duration || '0:00';
+
+        // Ambil thumbnail
+        let thumbnails = item.thumbnails || item.thumbnail?.contents || [];
 
         return {
           id: item.id,
-          title: item.title?.text || item.title,
-          artist: item.author?.name || item.artists?.[0]?.name || 'Unknown Artist',
-          album: item.album?.name || null,
-          duration: item.duration?.text || item.duration || 'Live/Unknown',
+          title: titleText,
+          artist: artistName,
+          duration: durationText,
           thumbnail: thumbnails
         };
       });
