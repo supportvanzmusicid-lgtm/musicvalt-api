@@ -9,7 +9,6 @@ let ytInstance = null;
 async function getYT() {
   if (!ytInstance) {
     ytInstance = await Innertube.create({ 
-      client: 'YOUTUBE', // Menggunakan client YouTube utama agar filter musik lebih akurat
       lang: 'id',
       location: 'ID'
     });
@@ -26,24 +25,19 @@ app.get('/api/search', async (req, res) => {
 
     const yt = await getYT();
     
-    // Cari khusus kategori lagu/musik resmi
+    // Pencarian khusus di YouTube Music dengan filter lagu (songs)
     const searchResults = await yt.music.search(query, { type: 'song' });
     
-    // Ambil dari rak songs
+    // Mengambil item dari hasil pencarian lagu YouTube Music
     const items = searchResults.songs?.contents || searchResults.contents || [];
 
     const formattedSongs = items
       .filter(item => item.id && item.title)
       .map((item) => {
-        // Ambil judul lagu
-        let titleText = 'Unknown Title';
-        if (typeof item.title === 'string') {
-          titleText = item.title;
-        } else if (item.title?.text) {
-          titleText = item.title.text;
-        }
+        // Judul lagu
+        let titleText = typeof item.title === 'string' ? item.title : (item.title?.text || 'Unknown Title');
 
-        // Ambil nama artis resmi (biasanya mencakup artis utama atau - Topic)
+        // Nama artis (mendukung artis utama atau rilisan - Topic)
         let artistName = 'Unknown Artist';
         if (item.artists && Array.isArray(item.artists)) {
           artistName = item.artists.map(a => a.name).join(', ');
@@ -51,13 +45,11 @@ app.get('/api/search', async (req, res) => {
           artistName = item.author.name;
         }
 
-        // Ambil nama album jika dari rilisan resmi
+        // Album & Durasi
         let albumName = item.album?.name || null;
-
-        // Ambil durasi
         let durationText = item.duration?.text || item.duration || '0:00';
 
-        // Ambil thumbnail cover lagu
+        // Thumbnail / Cover lagu resmi
         let thumbnails = item.thumbnails || item.thumbnail?.contents || [];
 
         return {
@@ -74,6 +66,29 @@ app.get('/api/search', async (req, res) => {
       success: true,
       total: formattedSongs.length,
       results: formattedSongs
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/play', async (req, res) => {
+  try {
+    const videoId = req.query.id;
+    if (!videoId) {
+      return res.status(400).json({ error: 'Parameter "id" wajib diisi' });
+    }
+
+    const yt = await getYT();
+    const info = await yt.getInfo(videoId);
+
+    res.json({
+      success: true,
+      id: videoId,
+      title: info.basic_info.title,
+      artist: info.basic_info.author,
+      duration: info.basic_info.duration,
+      thumbnails: info.basic_info.thumbnail
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
