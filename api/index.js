@@ -29,45 +29,59 @@ app.get('/api/search', async (req, res) => {
 
     const yt = await getYT();
     
-    // Menggunakan pencarian khusus musik agar mendeteksi track official & - Topic
-    const searchResults = await yt.music.search(query, { type: 'song' });
+    // Coba gunakan pencarian musik, tangkap berbagai kemungkinan properti
+    const searchResults = await yt.music.search(query);
     
-    // Ambil dari songs contents atau fallback ke videos/contents biasa
-    const items = searchResults.songs?.contents || searchResults.videos || searchResults.contents || [];
+    // Gabungkan berbagai potensi array hasil dari youtubei.js
+    let rawItems = [];
+    if (searchResults.contents) {
+      rawItems = searchResults.contents;
+    } else if (searchResults.songs?.contents) {
+      rawItems = searchResults.songs.contents;
+    } else if (searchResults.videos) {
+      rawItems = searchResults.videos;
+    }
 
-    const formattedSongs = items
-      .filter(item => item.id && item.title)
+    // Jika masih kosong, gunakan pencarian umum standar
+    if (rawItems.length === 0) {
+      const generalSearch = await yt.search(query);
+      rawItems = generalSearch.videos || generalSearch.contents || [];
+    }
+
+    const formattedSongs = rawItems
+      .filter(item => (item.id || item.video_id) && (item.title || item.name))
       .map((item) => {
-        // Ambil judul lagu
+        // Ambil judul
         let titleText = 'Unknown Title';
         if (typeof item.title === 'string') {
           titleText = item.title;
         } else if (item.title?.text) {
           titleText = item.title.text;
+        } else if (typeof item.name === 'string') {
+          titleText = item.name;
         }
 
-        // Ambil nama artist (bisa dari .artists atau .author)
+        // Ambil artis (mendukung official - Topic / channel biasa)
         let artistName = 'Unknown Artist';
         if (item.artists && Array.isArray(item.artists)) {
           artistName = item.artists.map(a => a.name).join(', ');
         } else if (item.author?.name) {
           artistName = item.author.name;
+        } else if (item.authors?.[0]?.name) {
+          artistName = item.authors[0].name;
         }
-
-        // Ambil nama album jika ada
-        let albumName = item.album?.name || null;
 
         // Ambil durasi
         let durationText = item.duration?.text || item.duration || '0:00';
 
-        // Ambil thumbnail resolusi terbaik
-        let thumbnails = item.thumbnails || item.thumbnail?.contents || [];
+        // Ambil thumbnail
+        let thumbnails = item.thumbnails || item.thumbnail?.contents || item.thumbnail || [];
 
         return {
-          id: item.id,
+          id: item.id || item.video_id,
           title: titleText,
           artist: artistName,
-          album: albumName,
+          album: item.album?.name || null,
           duration: durationText,
           thumbnail: thumbnails
         };
