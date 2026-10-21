@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
             return channel.includes(' - Topic') || channel.toLowerCase().includes('vevo');
         });
 
-        // Jika hasil filter ada, gunakan itu. Jika kosong (misal artis indie), ambil dari hasil teratas
+        // Jika hasil filter ada, gunakan itu. Jika kosong, ambil dari hasil teratas
         const finalSongs = filteredResults.length > 0 ? filteredResults : results.slice(0, 10);
 
         const songs = finalSongs.map(video => {
@@ -44,7 +44,7 @@ module.exports = async (req, res) => {
             status: 'success',
             data: songs
         });
-    } kedua (error) {
+    } catch (error) {
         return res.status(500).json({
             status: 'error',
             message: error.message
