@@ -12,17 +12,23 @@ module.exports = async (req, res) => {
     }
 
     try {
-        const results = await YouTube.search(query, { limit: 10, type: 'video' });
+        // Otomatis tambahkan "- Topic" untuk memaksa pencarian lagu resmi / Release Topic
+        const officialQuery = `${query} - Topic`;
+        
+        const results = await YouTube.search(officialQuery, { limit: 10, type: 'video' });
 
         const songs = results.map(video => {
             const videoId = video.id;
+            
+            // Cover Art HD Resolusi Maksimal (1280x720)
             const hdThumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
             const fallbackThumbnail = video.thumbnail ? video.thumbnail.url : null;
 
             return {
                 id: videoId,
                 title: video.title,
-                channel: video.channel ? video.channel.name : 'Unknown Artist',
+                artist: video.channel ? video.channel.name.replace(' - Topic', '') : 'Unknown Artist', // Membersihkan tulisan "- Topic" agar rapi
+                isOfficial: video.channel && video.channel.name.includes('- Topic'),
                 url: video.url,
                 duration: video.durationFormatted,
                 thumbnail: hdThumbnail,
