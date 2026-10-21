@@ -1,59 +1,58 @@
 const express = require('express');
-const SpotifyWebApi = require('spotify-web-api-node');
+const cors = require('cors');
+const YouTube = require('youtube-sr').default;
 
 const app = express();
+
+app.use(cors());
 app.use(express.json());
 
-// Inisialisasi Spotify API Client dengan kredensial dari Developer Dashboard
-const spotifyApi = new SpotifyWebApi({
-  clientId: process.env.SPOTIFY_CLIENT_ID,
-  clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
-});
+app.get('/api/search', async (req, res) => {
+    const query = req.query.q;
 
-// Middleware untuk mendapatkan Access Token secara otomatis
-async function getSpotifyToken(req, res, next) {
-  try {
-    const data = await spotifyApi.clientCredentialsGrant();
-    spotifyApi.setAccessToken(data.body['access_token']);
-    next();
-  } catch (err) {
-    res.status(500).json({ error: 'Gagal melakukan autentikasi dengan Spotify API', details: err.message });
-  }
-}
-
-// Endpoint untuk mencari lagu dan mendapatkan detail serta preview-nya
-app.get('/api/song', getSpotifyToken, async (req, res) => {
-  const query = req.query.q;
-  if (!query) {
-    return res.status(400).json({ error: 'Parameter query "q" wajib diisi.' });
-  }
-
-  try {
-    const searchResult = await spotifyApi.searchTracks(query, { limit: 1 });
-    const tracks = searchResult.body.tracks.items;
-
-    if (tracks.length === 0) {
-      return res.status(404).json({ error: 'Lagu tidak ditemukan.' });
+    if (!query) {
+        return res.status(400).json({ error: 'Parameter pencarian (q) wajib diisi!' });
     }
 
-    const track = tracks[0];
+    try {
+        // Cari lagu di YouTube (utamakan dari channel Topic/Resmi)
+        const results = await YouTube.search(query, { limit: 10, type: 'video' });
 
-    res.json({
-      name: track.name,
-      artist: track.artists.map(artist => artist.name).join(', '),
-      album: track.album.name,
-      release_date: track.album.release_date,
-      duration_ms: track.duration_ms,
-      preview_url: track.preview_url, // URL preview 30 detik (bisa null jika tidak tersedia)
-      external_url: track.external_urls.spotify, // Link resmi untuk memutar full track di aplikasi Spotify
-      album_art: track.album.images[0]?.url || null
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Terjadi kesalahan saat mengambil data', details: err.message });
-  }
+        const songs = results.map(video => {
+            const videoId = video.id;
+            
+            // Trik URL YouTube untuk mendapatkan thumbnail kualitas HD (Max Resolution)
+            // Ukuran asli maxresdefault memberikan resolusi 1280x720 (jika tersedia dari artisnya)
+            const hdThumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+            const fallbackThumbnail = video.thumbnail ? video.thumbnail.url : null;
+
+            return {
+                id: videoId,
+                title: video.title, // Judul lagu asli dari video
+                channel: video.channel ? video.channel.name : 'Unknown Artist', // Nama Artist / Release Topic
+                url: video.url,
+                duration: video.durationFormatted,
+                // Menggunakan HD thumbnail, jika tidak ada fallback ke standar
+                thumbnail: hdThumbnail, 
+                fallbackThumbnail: fallbackThumbnail
+            };
+        });
+
+        return res.json({
+            status: 'success',
+            data: songs
+        });
+    } catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            message: error.message
+        });
+    }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server berjalan di port ${PORT}`);
-});
+module.exports = app;
+
+if (process.env.NODE_ENV !== 'production') {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => console.log(`Server lokal berjalan di port ${PORT}`));
+}
