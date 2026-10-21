@@ -12,36 +12,40 @@ module.exports = async (req, res) => {
     }
 
     try {
-        // Menambahkan filter kata kunci otomatis agar mencarinya ke arah audio resmi / topic
-        const searchKeywords = `${query} official audio topic`;
-        const results = await YouTube.search(searchKeywords, { limit: 15, type: 'video' });
+        // Otomatis tambahkan kata kunci "- Topic" ke kueri pencarian
+        const searchKeywords = `${query} - Topic`;
+        
+        // Ambil lebih banyak hasil awal (limit: 25) untuk disaring secara ketat
+        const results = await YouTube.search(searchKeywords, { limit: 25, type: 'video' });
 
-        // Filter hasil: prioritaskan dari channel berlabel " - Topic" atau "VEVO"
-        const filteredResults = results.filter(video => {
-            const channel = video.channel ? video.channel.name : '';
-            return channel.includes(' - Topic') || channel.toLowerCase().includes('vevo');
+        // STRICT FILTER: HANYA ambil video yang berasal dari channel "- Topic"
+        const topicSongsOnly = results.filter(video => {
+            const channelName = video.channel ? video.channel.name : '';
+            return channelName.endsWith('- Topic') || channelName.includes('- Topic');
         });
 
-        // Jika hasil filter ada, gunakan itu. Jika kosong, ambil dari hasil teratas
-        const finalSongs = filteredResults.length > 0 ? filteredResults : results.slice(0, 10);
+        // Ambil maksimal 10 lagu resmi hasil saringan
+        const finalSongs = topicSongsOnly.slice(0, 10);
 
         const songs = finalSongs.map(video => {
             const videoId = video.id;
-            // Cover Art Resolusi HD Maksimal
             const hdThumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
 
             return {
                 id: videoId,
-                title: video.title.replace(/official audio|official video|lyrics|hq|hd/gi, '').trim(),
-                artist: video.channel ? video.channel.name.replace(' - Topic', '').replace('VEVO', '').trim() : 'Unknown Artist',
+                title: video.title,
+                // Membersihkan tulisan " - Topic" agar nama artis di UI aplikasi tetap rapi
+                artist: video.channel ? video.channel.name.replace(/\s*-\s*Topic/gi, '').trim() : 'Unknown Artist',
                 url: video.url,
                 duration: video.durationFormatted,
-                thumbnail: hdThumbnail
+                thumbnail: hdThumbnail,
+                isOfficialTopic: true
             };
         });
 
         return res.status(200).json({
             status: 'success',
+            total: songs.length,
             data: songs
         });
     } catch (error) {
