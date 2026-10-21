@@ -7,6 +7,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Endpoint Tes Utama
+app.get('/', (req, res) => {
+    res.json({
+        status: 'online',
+        message: 'API YouTube Music Vercel Berjalan dengan server.js!'
+    });
+});
+
+// Endpoint Pencarian Lagu & Cover HD Resmi
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
 
@@ -15,25 +24,20 @@ app.get('/api/search', async (req, res) => {
     }
 
     try {
-        // Cari lagu di YouTube (utamakan dari channel Topic/Resmi)
         const results = await YouTube.search(query, { limit: 10, type: 'video' });
 
         const songs = results.map(video => {
             const videoId = video.id;
-            
-            // Trik URL YouTube untuk mendapatkan thumbnail kualitas HD (Max Resolution)
-            // Ukuran asli maxresdefault memberikan resolusi 1280x720 (jika tersedia dari artisnya)
             const hdThumbnail = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
             const fallbackThumbnail = video.thumbnail ? video.thumbnail.url : null;
 
             return {
                 id: videoId,
-                title: video.title, // Judul lagu asli dari video
-                channel: video.channel ? video.channel.name : 'Unknown Artist', // Nama Artist / Release Topic
+                title: video.title,
+                channel: video.channel ? video.channel.name : 'Unknown Artist',
                 url: video.url,
                 duration: video.durationFormatted,
-                // Menggunakan HD thumbnail, jika tidak ada fallback ke standar
-                thumbnail: hdThumbnail, 
+                thumbnail: hdThumbnail,
                 fallbackThumbnail: fallbackThumbnail
             };
         });
