@@ -1,7 +1,7 @@
 const YouTube = require('youtube-sr').default;
 
 module.exports = async (req, res) => {
-    // Mengizinkan CORS
+    // Header CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET');
 
