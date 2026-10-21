@@ -21,23 +21,23 @@ module.exports = async (req, res) => {
         });
     }
 
-    // Daftar server publik Piped yang lebih banyak & aktif
+    // Daftar server publik Piped yang diperluas
     const pipedInstances = [
         'https://pipedapi.kavin.rocks',
-        'https://pipedapi.drgns.space',
+        'https://pipedapi.adminforge.de',
         'https://api.piped.projectsegfau.lt',
-        'https://pipedapi.privacy.com.de'
+        'https://pipedapi.privacy.com.de',
+        'https://pipedapi.solifound.me'
     ];
 
-    // Header penyamaran agar request dari Vercel tidak diblokir sebagai bot
     const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     };
 
     let searchData = null;
     let successInstance = null;
 
-    // 1. Coba cari lagu ke instance Piped satu per satu
+    // Coba tembus pencarian ke server-server di atas satu per satu
     for (const instance of pipedInstances) {
         try {
             const searchRes = await fetch(`${instance}/search?q=${encodeURIComponent(query)}&filter=music_songs`, { headers });
@@ -46,7 +46,6 @@ module.exports = async (req, res) => {
             if (searchRes.ok && text) {
                 const json = JSON.parse(text);
                 if (json.items && json.items.length > 0) {
-                    // Prioritaskan lagu resmi (Topic / Verified)
                     const officialItems = json.items.filter(item => 
                         item.type === 'music_song' || item.uploaderUrl?.includes('-Topic') || item.uploaderVerified
                     );
@@ -57,14 +56,14 @@ module.exports = async (req, res) => {
                 }
             }
         } catch (e) {
-            continue; // Lanjut ke server berikutnya jika gagal
+            continue; 
         }
     }
 
     if (!searchData || !successInstance) {
         return res.status(502).json({ 
             status: 'error', 
-            message: 'Semua server Piped publik menolak koneksi atau sibuk. Coba gunakan kata kunci lain.' 
+            message: 'Semua server Piped publik memblokir IP Vercel. Coba gunakan kata kunci lain.' 
         });
     }
 
@@ -72,7 +71,6 @@ module.exports = async (req, res) => {
         const firstItem = searchData[0];
         const videoId = firstItem.url.replace('/watch?v=', '');
 
-        // 2. Ambil detail stream & metadata resmi dari server yang sama
         const streamRes = await fetch(`${successInstance}/streams/${videoId}`, { headers });
         const streamText = await streamRes.text();
 
@@ -85,7 +83,6 @@ module.exports = async (req, res) => {
 
         const streamData = JSON.parse(streamText);
 
-        // Cari format audio m4a / opus terbaik
         const audioUrl = streamData.audioStreams?.find(s => s.mimeType?.includes('audio/mp4'))?.url 
                          || streamData.audioStreams?.[0]?.url;
 
@@ -96,14 +93,10 @@ module.exports = async (req, res) => {
             });
         }
 
-        // Bersihkan nama artist dari akhiran " - Topic"
         let rawArtist = streamData.uploader || firstItem.uploaderName || "Unknown Artist";
         let cleanArtist = rawArtist.replace(/\s*-\s*Topic$/i, '').trim();
-
-        // Ambil cover album
         let albumCover = streamData.thumbnailUrl || firstItem.thumbnail;
 
-        // 3. Kirim hasil sukses
         return res.status(200).json({
             status: 'success',
             data: {
