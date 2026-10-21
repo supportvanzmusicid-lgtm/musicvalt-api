@@ -21,59 +21,59 @@ module.exports = async (req, res) => {
         });
     }
 
-    try {
-        // 1. Ambil data pencarian dari Piped API
-        const searchRes = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=music_songs`);
-        const searchResText = await searchRes.text();
+    // Daftar server publik Piped cadangan (Multi-instance fallback)
+    const pipedInstances = [
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.privacy.com.de',
+        'https://pipedapi.tokhmi.xyz'
+    ];
 
-        // Cek apakah balasan dari server valid atau kosong
-        if (!searchRes.ok || !searchResText) {
-            return res.status(502).json({ 
-                status: 'error', 
-                message: 'Server Piped sedang sibuk atau down. Coba beberapa saat lagi.' 
-            });
-        }
+    let searchData = null;
+    let successInstance = null;
 
-        let searchData;
+    // 1. Coba cari lagu ke server-server Piped satu per satu sampai ada yang tembus
+    for (const instance of pipedInstances) {
         try {
-            searchData = JSON.parse(searchResText);
+            const searchRes = await fetch(`${instance}/search?q=${encodeURIComponent(query)}&filter=music_songs`);
+            const text = await searchRes.text();
+            
+            if (searchRes.ok && text) {
+                const json = JSON.parse(text);
+                if (json.items && json.items.length > 0) {
+                    searchData = json;
+                    successInstance = instance;
+                    break; // Kalau berhasil, hentikan perulangan
+                }
+            }
         } catch (e) {
-            return res.status(502).json({ 
-                status: 'error', 
-                message: 'Gagal memproses data dari Piped API (Bukan format JSON).' 
-            });
+            // Lanjut coba instance berikutnya kalau yang ini error
+            continue;
         }
+    }
 
-        if (!searchData.items || searchData.items.length === 0) {
-            return res.status(404).json({ 
-                status: 'error', 
-                message: 'Lagu tidak ditemukan' 
-            });
-        }
+    if (!searchData || !successInstance) {
+        return res.status(502).json({ 
+            status: 'error', 
+            message: 'Semua server Piped publik sedang sibuk atau down. Coba beberapa saat lagi.' 
+        });
+    }
 
+    try {
         const firstItem = searchData.items[0];
         const videoId = firstItem.url.replace('/watch?v=', '');
 
-        // 2. Minta Stream Link dari Piped API
-        const streamRes = await fetch(`https://pipedapi.kavin.rocks/streams/${videoId}`);
-        const streamResText = await streamRes.text();
+        // 2. Ambil Stream Link dari server Piped yang sama yang sukses tadi
+        const streamRes = await fetch(`${successInstance}/streams/${videoId}`);
+        const streamText = await streamRes.text();
 
-        if (!streamRes.ok || !streamResText) {
+        if (!streamRes.ok || !streamText) {
             return res.status(502).json({ 
                 status: 'error', 
-                message: 'Gagal mengambil stream audio dari Piped.' 
+                message: 'Gagal mengambil stream audio dari server Piped.' 
             });
         }
 
-        let streamData;
-        try {
-            streamData = JSON.parse(streamResText);
-        } catch (e) {
-            return res.status(502).json({ 
-                status: 'error', 
-                message: 'Format stream audio tidak valid.' 
-            });
-        }
+        const streamData = JSON.parse(streamText);
 
         // Cari format audio m4a / opus
         const audioUrl = streamData.audioStreams?.find(s => s.mimeType?.includes('audio/mp4'))?.url 
