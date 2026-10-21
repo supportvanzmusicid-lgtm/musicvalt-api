@@ -21,102 +21,77 @@ module.exports = async (req, res) => {
         });
     }
 
-    // Daftar server publik Invidious alternatif
+    // Daftar instance Invidious cadangan yang lebih banyak
     const invidiousInstances = [
+        'https://inv.nadeko.net',
         'https://invidious.projectsegfau.lt',
+        'https://in.projectsegfau.lt',
         'https://vid.puffyan.us',
-        'https://invidious.no-mad.net',
-        'https://inv.nadeko.net'
+        'https://invidious.no-mad.net'
     ];
 
-    let searchData = null;
-    let successInstance = null;
+    let streamData = null;
 
-    // 1. Cari lagu via Invidious API
+    // Coba tembus server satu per satu sampai ada yang merespon link audio
     for (const instance of invidiousInstances) {
         try {
+            // 1. Cari lagu
             const searchRes = await fetch(`${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video`);
             const text = await searchRes.text();
             
-            if (searchRes.ok && text) {
-                const json = JSON.parse(text);
-                if (Array.isArray(json) && json.length > 0) {
-                    // Filter ambil video musik resmi / topic
-                    const officialItems = json.filter(item => 
-                        item.author.includes('Topic') || item.type === 'video'
-                    );
-                    searchData = officialItems.length > 0 ? officialItems : json;
-                    successInstance = instance;
-                    break;
-                }
+            if (!searchRes.ok || !text) continue;
+            
+            const json = JSON.parse(text);
+            if (!Array.isArray(json) || json.length === 0) continue;
+
+            // Prioritaskan yang dari Channel Topic (Resmi)
+            const officialItem = json.find(item => item.author && item.author.includes('Topic')) || json[0];
+            const videoId = officialItem.videoId;
+
+            // 2. Ambil detail stream lagu langsung dari instance yang sama
+            const streamRes = await fetch(`${instance}/api/v1/videos/${videoId}`);
+            const streamText = await streamRes.text();
+            
+            if (!streamRes.ok || !streamText) continue;
+
+            const streamJson = JSON.parse(streamText);
+            const adaptiveFormats = streamJson.adaptiveFormats || [];
+            
+            // Cari format audio m4a atau webm terbaik
+            const audioFormat = adaptiveFormats.find(f => f.type?.includes('audio/mp4')) 
+                                || adaptiveFormats.find(f => f.type?.includes('audio/webm'));
+
+            if (audioFormat && audioFormat.url) {
+                // Jika sukses mendapatkan link audio, simpan datanya dan hentikan perulangan
+                let rawArtist = officialItem.author || "Unknown Artist";
+                let cleanArtist = rawArtist.replace(/\s*-\s*Topic$/i, '').trim();
+                let albumCover = officialItem.videoThumbnails?.find(v => v.quality === 'maxres')?.url 
+                                 || officialItem.videoThumbnails?.[0]?.url;
+
+                streamData = {
+                    title: officialItem.title,
+                    artist: cleanArtist,
+                    cover: albumCover,
+                    duration: officialItem.lengthSeconds,
+                    audioUrl: audioFormat.url
+                };
+                break;
             }
         } catch (e) {
-            continue;
+            continue; // Coba instance berikutnya jika error/timeout
         }
     }
 
-    if (!searchData || !successInstance) {
+    if (!streamData) {
         return res.status(502).json({ 
             status: 'error', 
-            message: 'Server Invidious sedang sibuk. Coba beberapa saat lagi.' 
+            message: 'Semua server publik sedang sibuk. Coba beberapa saat lagi atau ganti kata kunci.' 
         });
     }
 
-    try {
-        const firstItem = searchData[0];
-        const videoId = firstItem.videoId;
-
-        // 2. Ambil detail stream audio langsung dari Invidious
-        const streamRes = await fetch(`${successInstance}/api/v1/videos/${videoId}`);
-        const streamText = await streamRes.text();
-
-        if (!streamRes.ok || !streamText) {
-            return res.status(502).json({ 
-                status: 'error', 
-                message: 'Gagal mengambil detail stream lagu.' 
-            });
-        }
-
-        const streamData = JSON.parse(streamText);
-
-        // Ambil link audio adaptif (m4a / webm)
-        const adaptiveFormats = streamData.adaptiveFormats || [];
-        const audioFormat = adaptiveFormats.find(f => f.type?.includes('audio/mp4')) 
-                            || adaptiveFormats.find(f => f.type?.includes('audio/webm'));
-
-        const audioUrl = audioFormat?.url;
-
-        if (!audioUrl) {
-            return res.status(500).json({ 
-                status: 'error', 
-                message: 'Link audio mentah tidak ditemukan.' 
-            });
-        }
-
-        // Bersihkan nama artis dari akhiran " - Topic"
-        let rawArtist = firstItem.author || "Unknown Artist";
-        let cleanArtist = rawArtist.replace(/\s*-\s*Topic$/i, '').trim();
-
-        // Ambil thumbnail kualitas terbaik
-        let albumCover = firstItem.videoThumbnails?.find(v => v.quality === 'maxres')?.url 
-                         || firstItem.videoThumbnails?.[0]?.url;
-
-        // 3. Kirim hasil sukses ke ExoPlayer Android
-        return res.status(200).json({
-            status: 'success',
-            data: {
-                title: firstItem.title,
-                artist: cleanArtist,
-                cover: albumCover,
-                duration: firstItem.lengthSeconds,
-                audioUrl: audioUrl
-            }
-        });
-
-    } catch (error) {
-        return res.status(500).json({ 
-            status: 'error', 
-            message: error.message 
-        });
-    }
+    // 3. Kirim hasil sukses ke aplikasi ExoPlayer Android
+    return res.status(200).json({
+        status: 'success',
+        data: streamData
+    });
 };
