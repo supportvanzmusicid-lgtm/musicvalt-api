@@ -1,7 +1,6 @@
 {
-  "name": "yt-music-backend",
+  "name": "musicvalt-api",
   "version": "1.0.0",
-  "description": "Backend API YouTube Music untuk Web",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
