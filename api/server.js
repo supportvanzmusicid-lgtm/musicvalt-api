@@ -21,55 +21,59 @@ module.exports = async (req, res) => {
         });
     }
 
-    // Daftar server publik Piped cadangan
+    // Daftar server publik Piped yang lebih banyak & aktif
     const pipedInstances = [
         'https://pipedapi.kavin.rocks',
-        'https://pipedapi.privacy.com.de',
-        'https://pipedapi.tokhmi.xyz'
+        'https://pipedapi.drgns.space',
+        'https://api.piped.projectsegfau.lt',
+        'https://pipedapi.privacy.com.de'
     ];
+
+    // Header penyamaran agar request dari Vercel tidak diblokir sebagai bot
+    const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    };
 
     let searchData = null;
     let successInstance = null;
 
-    // 1. Cari lagu khusus kategori "music_songs" (Rilis Resmi / Topic Channel)
+    // 1. Coba cari lagu ke instance Piped satu per satu
     for (const instance of pipedInstances) {
         try {
-            // Filter 'music_songs' memastikan hanya mengambil lagu resmi YouTube Music
-            const searchRes = await fetch(`${instance}/search?q=${encodeURIComponent(query)}&filter=music_songs`);
+            const searchRes = await fetch(`${instance}/search?q=${encodeURIComponent(query)}&filter=music_songs`, { headers });
             const text = await searchRes.text();
             
             if (searchRes.ok && text) {
                 const json = JSON.parse(text);
                 if (json.items && json.items.length > 0) {
-                    // Filter tambahan: Utamakan hasil yang berupa musik resmi (type === 'music_song' atau 'stream')
+                    // Prioritaskan lagu resmi (Topic / Verified)
                     const officialItems = json.items.filter(item => 
                         item.type === 'music_song' || item.uploaderUrl?.includes('-Topic') || item.uploaderVerified
                     );
 
                     searchData = officialItems.length > 0 ? officialItems : json.items;
                     successInstance = instance;
-                    break;
+                    break; 
                 }
             }
         } catch (e) {
-            continue;
+            continue; // Lanjut ke server berikutnya jika gagal
         }
     }
 
     if (!searchData || !successInstance) {
         return res.status(502).json({ 
             status: 'error', 
-            message: 'Semua server Piped publik sedang sibuk atau lagu tidak ditemukan. Coba lagi.' 
+            message: 'Semua server Piped publik menolak koneksi atau sibuk. Coba gunakan kata kunci lain.' 
         });
     }
 
     try {
-        // Ambil hasil teratas dari lagu resmi
         const firstItem = searchData[0];
         const videoId = firstItem.url.replace('/watch?v=', '');
 
-        // 2. Ambil detail stream & metadata resmi dari Piped
-        const streamRes = await fetch(`${successInstance}/streams/${videoId}`);
+        // 2. Ambil detail stream & metadata resmi dari server yang sama
+        const streamRes = await fetch(`${successInstance}/streams/${videoId}`, { headers });
         const streamText = await streamRes.text();
 
         if (!streamRes.ok || !streamText) {
@@ -81,7 +85,7 @@ module.exports = async (req, res) => {
 
         const streamData = JSON.parse(streamText);
 
-        // Cari format audio m4a / opus dengan kualitas terbaik
+        // Cari format audio m4a / opus terbaik
         const audioUrl = streamData.audioStreams?.find(s => s.mimeType?.includes('audio/mp4'))?.url 
                          || streamData.audioStreams?.[0]?.url;
 
@@ -92,22 +96,22 @@ module.exports = async (req, res) => {
             });
         }
 
-        // Bersihkan nama artist jika ada akhiran " - Topic"
+        // Bersihkan nama artist dari akhiran " - Topic"
         let rawArtist = streamData.uploader || firstItem.uploaderName || "Unknown Artist";
         let cleanArtist = rawArtist.replace(/\s*-\s*Topic$/i, '').trim();
 
-        // Ambil cover album dengan resolusi terbaik
+        // Ambil cover album
         let albumCover = streamData.thumbnailUrl || firstItem.thumbnail;
 
-        // 3. Kirim respon lengkap untuk UI ExoPlayer (Cover, Artist, Title, Stream)
+        // 3. Kirim hasil sukses
         return res.status(200).json({
             status: 'success',
             data: {
-                title: streamData.title,          // Nama Lagu / Judul
-                artist: cleanArtist,               // Nama Artist / Penyanyi (Bersih tanpa "- Topic")
-                cover: albumCover,                 // URL Gambar Cover Album
-                duration: streamData.duration,     // Durasi Lagu (detik)
-                audioUrl: audioUrl                 // Direct URL Stream M4A/Opus untuk ExoPlayer
+                title: streamData.title,
+                artist: cleanArtist,
+                cover: albumCover,
+                duration: streamData.duration,
+                audioUrl: audioUrl
             }
         });
 
