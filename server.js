@@ -1,6 +1,6 @@
 import express from 'express';
 import axios from 'axios';
-import { Innertube } from 'youtubei.js';
+import { Innertube, UniversalCache } from 'youtubei.js';
 
 const app = express();
 app.use(express.json());
@@ -9,9 +9,11 @@ let ytInstance = null;
 
 async function getYouTubeClient() {
   if (!ytInstance) {
+    // Menggunakan TV_EMBEDDED untuk melewati blokir 403 & error 404 Vercel
     ytInstance = await Innertube.create({
-      retrieve_player: true, // Wajib true agar dekripsi audio aktif (tidak 30 detik)
-      generate_session_locality: true
+      client_type: 'TV_EMBEDDED',
+      retrieve_player: true,
+      cache: new UniversalCache(false)
     });
   }
   return ytInstance;
@@ -20,7 +22,6 @@ async function getYouTubeClient() {
 // Helper untuk memaksa cover / foto profil ke resolusi HD (1080p)
 function getHDCoverUrl(thumbnails) {
   if (!thumbnails || thumbnails.length === 0) return null;
-  
   const lastThumb = thumbnails[thumbnails.length - 1];
   let url = lastThumb.url || lastThumb;
 
@@ -39,69 +40,44 @@ function getHDCoverUrl(thumbnails) {
 function parseDurationToSeconds(durationText) {
   if (!durationText) return 0;
   const parts = durationText.split(':').map(Number);
-  if (parts.length === 2) {
-    return parts[0] * 60 + parts[1];
-  } else if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  }
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   return 0;
 }
 
-// 1. Endpoint Pencarian Lagu (Diperketat agar tidak ngasal & bersih dari shorts)
+// 1. Endpoint Search Lagu
 app.get('/api/youtube/search', async (req, res) => {
   try {
-    const query = req.query.q || 'Official Release Topic';
+    const query = req.query.q || 'Official Music Audio';
     const yt = await getYouTubeClient();
     
-    const searchResults = await yt.music.search(query, { type: 'song' });
-    
-    // Ambil secara spesifik dari songs.contents atau telusuri shelf yang valid
-    let rawSongs = [];
-    if (searchResults.songs && searchResults.songs.contents) {
-      rawSongs = searchResults.songs.contents;
-    } else if (searchResults.contents) {
-      for (const shelf of searchResults.contents) {
-        if (shelf.contents && Array.isArray(shelf.contents)) {
-          rawSongs = shelf.contents;
-          break;
-        }
-      }
-      if (rawSongs.length === 0) {
-        rawSongs = searchResults.contents;
-      }
-    }
+    const searchResults = await yt.search(query, { type: 'video' });
+    const rawVideos = searchResults.results || [];
 
-    const formattedSongs = rawSongs
-      .map(song => {
+    const formattedSongs = rawVideos
+      .map(video => {
         let artistName = 'Unknown Artist';
-        if (song.artists && Array.isArray(song.artists) && song.artists.length > 0) {
-          artistName = song.artists.map(a => a.name).join(', ');
-        } else if (song.author) {
-          artistName = typeof song.author === 'string' ? song.author : (song.author.name || 'Unknown Artist');
-        } else if (song.subtitle) {
-          artistName = typeof song.subtitle === 'string' ? song.subtitle : (song.subtitle.text || 'Unknown Artist');
+        if (video.author) {
+          artistName = typeof video.author === 'string' ? video.author : (video.author.name || 'Unknown Artist');
         }
 
-        const thumbnails = song.thumbnails || song.thumbnail || [];
+        const titleText = video.title?.text || (typeof video.title === 'string' ? video.title : 'Unknown Title');
+        const thumbnails = video.thumbnails || [];
         const hdCover = getHDCoverUrl(thumbnails);
-        const durationText = song.duration?.text || null;
+        const durationText = video.duration?.text || null;
 
         return {
-          id: song.id || song.videoId,
-          title: song.title || song.name || 'Unknown Title',
+          id: video.id || video.videoId,
+          title: titleText,
           artist: artistName,
-          album: song.album?.name || null,
+          album: null,
           duration: durationText,
           duration_seconds: parseDurationToSeconds(durationText),
           cover_hd: hdCover
         };
       })
-      // FILTER KETAT: Wajib punya ID, durasi valid, dan dibuang jika di bawah 45 detik (shorts/preview)
-      .filter(song => {
-        if (!song.id) return false;
-        if (song.duration_seconds > 0 && song.duration_seconds <= 45) return false;
-        return true;
-      });
+      // Filter video di bawah 45 detik untuk menghindari shorts/preview
+      .filter(song => song.id && song.duration_seconds > 45);
 
     return res.status(200).json({
       success: true,
@@ -110,76 +86,46 @@ app.get('/api/youtube/search', async (req, res) => {
       results: formattedSongs
     });
   } catch (error) {
-    console.error('YouTube Song Search Error:', error);
+    console.error('Search Error:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// 2. Endpoint Pencarian Artist & Foto Profil HD
-app.get('/api/youtube/search/artist', async (req, res) => {
-  try {
-    const query = req.query.q || 'Tulus';
-    const yt = await getYouTubeClient();
-    
-    const searchResults = await yt.music.search(query, { type: 'artist' });
-
-    const formattedArtists = (searchResults.artists?.contents || searchResults.contents || []).map(artist => {
-      const thumbnails = artist.thumbnails || artist.thumbnail || [];
-      const hdProfilePic = getHDCoverUrl(thumbnails);
-
-      return {
-        id: artist.id || artist.channel_id,
-        name: artist.name || artist.title || 'Unknown Artist',
-        subscribers: artist.subscribers?.text || artist.subtitle?.text || null,
-        profile_picture_hd: hdProfilePic,
-        thumbnails: thumbnails
-      };
-    });
-
-    return res.status(200).json({
-      success: true,
-      query: query,
-      total_results: formattedArtists.length,
-      results: formattedArtists
-    });
-  } catch (error) {
-    console.error('YouTube Artist Search Error:', error);
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// 3. Endpoint Stream Audio Full Durasi
+// 2. Endpoint Stream Audio Full Durasi (Aman dari Error 500)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
     if (!videoId) {
-      return res.status(400).json({ success: false, message: 'Parameter id wajib diisi' });
+      return res.status(400).json({ success: false, message: 'Parameter id wajib diisi!' });
     }
 
     const yt = await getYouTubeClient();
-    const info = await yt.getBasicInfo(videoId);
-    
-    const streamingData = info.streaming_data;
-    if (!streamingData || !streamingData.adaptive_formats) {
-      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
+
+    let info;
+    try {
+      info = await yt.getInfo(videoId);
+    } catch (err) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'ID Video tidak valid. Pastikan memasukkan ID YouTube (misal: dQw4w9WgXcQ), bukan judul lagu!' 
+      });
     }
 
-    const audioFormats = streamingData.adaptive_formats
-      .filter(f => f.has_audio && !f.has_video)
-      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+    const format = info.chooseFormat({
+      type: 'audio',
+      quality: 'best'
+    });
 
-    const selectedFormat = audioFormats[0];
-
-    if (!selectedFormat || !selectedFormat.url) {
-      return res.status(404).json({ success: false, message: 'Direct stream URL tidak ditemukan' });
+    if (!format || !format.url) {
+      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan untuk ID ini' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: selectedFormat.url,
-      mime_type: selectedFormat.mime_type,
-      bitrate: selectedFormat.bitrate
+      stream_url: format.url,
+      mime_type: format.mime_type,
+      bitrate: format.bitrate
     });
   } catch (error) {
     console.error('Stream Error:', error);
@@ -187,7 +133,7 @@ app.get('/api/youtube/stream', async (req, res) => {
   }
 });
 
-// 4. Endpoint GitHub Releases
+// 3. Endpoint GitHub Releases
 app.get('/api/github/releases', async (req, res) => {
   try {
     const owner = req.query.owner || 'octocat';
@@ -208,7 +154,7 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt Backend API Running Smoothly!' });
+  return res.json({ status: 'Online', message: 'MusicValt API Running Smoothly' });
 });
 
 export default app;
