@@ -7,17 +7,18 @@ app.use(express.json());
 
 let ytInstance = null;
 
+// Helper untuk inisialisasi client YouTube Music
 async function getYouTubeClient() {
   if (!ytInstance) {
     ytInstance = await Innertube.create({
-      retrieve_player: false,
+      retrieve_player: false, // Mempercepat loading & hemat memori di Vercel
       generate_session_locality: true
     });
   }
   return ytInstance;
 }
 
-// Endpoint YouTube Search / Release Topic
+// 1. Endpoint Pencarian / Katalog Release YouTube Music
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -35,7 +36,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// Endpoint GitHub Releases
+// 2. Endpoint GitHub Releases
 app.get('/api/github/releases', async (req, res) => {
   try {
     const owner = req.query.owner || 'octocat';
@@ -56,11 +57,12 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  res.json({ status: 'Online', message: 'Vanz Music Backend API Running' });
+  res.json({ status: 'Online', message: 'MusicValt API Running smoothly!' });
 });
 
 export default app;
 
+// Jalankan lokal jika tidak berada di environment Vercel
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
