@@ -47,7 +47,7 @@ function parseDurationToSeconds(durationText) {
   return 0;
 }
 
-// 1. Endpoint Pencarian Lagu (Dengan Filter Anti-30 Detik / Shorts)
+// 1. Endpoint Pencarian Lagu (Dilengkapi Fallback Artist & Filter Anti-30 Detik)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -58,9 +58,15 @@ app.get('/api/youtube/search', async (req, res) => {
 
     const formattedSongs = rawSongs
       .map(song => {
-        const artistName = song.artists 
-          ? song.artists.map(a => a.name).join(', ') 
-          : (song.author?.name || 'Unknown Artist');
+        // Cek berbagai kemungkinan properti artist agar tidak ada yang kosong/null
+        let artistName = 'Unknown Artist';
+        if (song.artists && Array.isArray(song.artists) && song.artists.length > 0) {
+          artistName = song.artists.map(a => a.name).join(', ');
+        } else if (song.author) {
+          artistName = typeof song.author === 'string' ? song.author : (song.author.name || 'Unknown Artist');
+        } else if (song.subtitle) {
+          artistName = typeof song.subtitle === 'string' ? song.subtitle : (song.subtitle.text || 'Unknown Artist');
+        }
 
         const thumbnails = song.thumbnails || song.thumbnail || [];
         const hdCover = getHDCoverUrl(thumbnails);
@@ -68,7 +74,7 @@ app.get('/api/youtube/search', async (req, res) => {
 
         return {
           id: song.id || song.videoId,
-          title: song.title || song.name,
+          title: song.title || song.name || 'Unknown Title',
           artist: artistName,
           album: song.album?.name || null,
           duration: durationText,
@@ -76,7 +82,7 @@ app.get('/api/youtube/search', async (req, res) => {
           cover_hd: hdCover
         };
       })
-      // FILTER UTAMA: Buang lagu di bawah 45 detik agar terhindar dari preview/shorts
+      // FILTER UTAMA: Buang lagu di bawah 45 detik (mencegah shorts / preview 30 detik masuk)
       .filter(song => {
         if (song.duration_seconds === 0) return true;
         return song.duration_seconds > 45;
@@ -108,7 +114,7 @@ app.get('/api/youtube/search/artist', async (req, res) => {
 
       return {
         id: artist.id || artist.channel_id,
-        name: artist.name || artist.title,
+        name: artist.name || artist.title || 'Unknown Artist',
         subscribers: artist.subscribers?.text || artist.subtitle?.text || null,
         profile_picture_hd: hdProfilePic,
         thumbnails: thumbnails
