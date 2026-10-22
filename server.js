@@ -10,7 +10,7 @@ let ytInstance = null;
 async function getYouTubeClient() {
   if (!ytInstance) {
     ytInstance = await Innertube.create({
-      retrieve_player: false,
+      retrieve_player: true, // DISET TRUE SUPAYA TIDAK KENA 30 DETIK (FULL LAGU)
       generate_session_locality: true
     });
   }
@@ -58,7 +58,6 @@ app.get('/api/youtube/search', async (req, res) => {
 
     const formattedSongs = rawSongs
       .map(song => {
-        // Cek berbagai kemungkinan properti artist agar tidak ada yang kosong/null
         let artistName = 'Unknown Artist';
         if (song.artists && Array.isArray(song.artists) && song.artists.length > 0) {
           artistName = song.artists.map(a => a.name).join(', ');
@@ -82,7 +81,6 @@ app.get('/api/youtube/search', async (req, res) => {
           cover_hd: hdCover
         };
       })
-      // FILTER UTAMA: Buang lagu di bawah 45 detik (mencegah shorts / preview 30 detik masuk)
       .filter(song => {
         if (song.duration_seconds === 0) return true;
         return song.duration_seconds > 45;
@@ -133,7 +131,7 @@ app.get('/api/youtube/search/artist', async (req, res) => {
   }
 });
 
-// 3. Endpoint Stream Audio Full Durasi (Wajib dipanggil lewat ID lagu sebelum masuk ExoPlayer)
+// 3. Endpoint Stream Audio Full Durasi (Decryption Aktif)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -149,7 +147,6 @@ app.get('/api/youtube/stream', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
     }
 
-    // Ambil format audio saja (tanpa video) dengan bitrate paling tinggi
     const audioFormats = streamingData.adaptive_formats
       .filter(f => f.has_audio && !f.has_video)
       .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
