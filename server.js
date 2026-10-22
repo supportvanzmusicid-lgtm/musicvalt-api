@@ -10,14 +10,14 @@ let ytInstance = null;
 async function getYouTubeClient() {
   if (!ytInstance) {
     ytInstance = await Innertube.create({
-      retrieve_player: false, // Menghindari error pembacaan parser JS ekstra di Vercel
+      retrieve_player: false,
       generate_session_locality: true
     });
   }
   return ytInstance;
 }
 
-// Endpoint YouTube Search / Release
+// Route YouTube Music
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -30,12 +30,12 @@ app.get('/api/youtube/search', async (req, res) => {
       results: searchResults
     });
   } catch (error) {
-    console.error('YouTube Music Error:', error);
+    console.error('YouTube API Error:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Endpoint GitHub Releases
+// Route GitHub
 app.get('/api/github/releases', async (req, res) => {
   try {
     const owner = req.query.owner || 'octocat';
@@ -54,8 +54,9 @@ app.get('/api/github/releases', async (req, res) => {
   }
 });
 
+// Route Principale
 app.get('/', (req, res) => {
-  res.json({ status: 'Online', message: 'MusicValt Backend API Running' });
+  res.json({ status: 'Online', message: 'API MusicValt opérationnelle !' });
 });
 
 export default app;
@@ -63,6 +64,6 @@ export default app;
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+    console.log(`Serveur démarré sur http://localhost:${PORT}`);
   });
 }
