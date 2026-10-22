@@ -9,10 +9,8 @@ let ytInstance = null;
 
 async function getYouTubeClient() {
   if (!ytInstance) {
-    // Menggunakan TV_EMBEDDED untuk melewati blokir 403 & error 404 Vercel
+    // Menggunakan client default (WEB) agar yt.music.search berjalan mulus tanpa error 400
     ytInstance = await Innertube.create({
-      client_type: 'TV_EMBEDDED',
-      retrieve_player: true,
       cache: new UniversalCache(false)
     });
   }
@@ -45,38 +43,41 @@ function parseDurationToSeconds(durationText) {
   return 0;
 }
 
-// 1. Endpoint Search Lagu
+// 1. Endpoint Search Lagu (Stabil dengan client default WEB)
 app.get('/api/youtube/search', async (req, res) => {
   try {
-    const query = req.query.q || 'Official Music Audio';
+    const query = req.query.q || 'Official Release Topic';
     const yt = await getYouTubeClient();
     
-    const searchResults = await yt.search(query, { type: 'video' });
-    const rawVideos = searchResults.results || [];
+    const searchResults = await yt.music.search(query, { type: 'song' });
+    const rawSongs = searchResults.songs?.contents || searchResults.contents || [];
 
-    const formattedSongs = rawVideos
-      .map(video => {
+    const formattedSongs = rawSongs
+      .map(song => {
         let artistName = 'Unknown Artist';
-        if (video.author) {
-          artistName = typeof video.author === 'string' ? video.author : (video.author.name || 'Unknown Artist');
+        if (song.artists && Array.isArray(song.artists) && song.artists.length > 0) {
+          artistName = song.artists.map(a => a.name).join(', ');
+        } else if (song.author) {
+          artistName = typeof song.author === 'string' ? song.author : (song.author.name || 'Unknown Artist');
+        } else if (song.subtitle) {
+          artistName = typeof song.subtitle === 'string' ? song.subtitle : (song.subtitle.text || 'Unknown Artist');
         }
 
-        const titleText = video.title?.text || (typeof video.title === 'string' ? video.title : 'Unknown Title');
-        const thumbnails = video.thumbnails || [];
+        const thumbnails = song.thumbnails || song.thumbnail || [];
         const hdCover = getHDCoverUrl(thumbnails);
-        const durationText = video.duration?.text || null;
+        const durationText = song.duration?.text || null;
 
         return {
-          id: video.id || video.videoId,
-          title: titleText,
+          id: song.id || song.videoId,
+          title: song.title || song.name || 'Unknown Title',
           artist: artistName,
-          album: null,
+          album: song.album?.name || null,
           duration: durationText,
           duration_seconds: parseDurationToSeconds(durationText),
           cover_hd: hdCover
         };
       })
-      // Filter video di bawah 45 detik untuk menghindari shorts/preview
+      // Filter lagu di bawah 45 detik untuk membuang shorts / preview
       .filter(song => song.id && song.duration_seconds > 45);
 
     return res.status(200).json({
@@ -91,7 +92,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Audio Full Durasi (Aman dari Error 500)
+// 2. Endpoint Stream Audio Full Durasi
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -103,29 +104,36 @@ app.get('/api/youtube/stream', async (req, res) => {
 
     let info;
     try {
-      info = await yt.getInfo(videoId);
+      info = await yt.getBasicInfo(videoId);
     } catch (err) {
       return res.status(400).json({ 
         success: false, 
-        message: 'ID Video tidak valid. Pastikan memasukkan ID YouTube (misal: dQw4w9WgXcQ), bukan judul lagu!' 
+        message: 'ID Video tidak valid atau gagal mengambil info lagu.' 
       });
     }
 
-    const format = info.chooseFormat({
-      type: 'audio',
-      quality: 'best'
-    });
+    const streamingData = info.streaming_data;
+    if (!streamingData || !streamingData.adaptive_formats) {
+      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
+    }
 
-    if (!format || !format.url) {
-      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan untuk ID ini' });
+    // Ambil format audio saja dengan bitrate tertinggi
+    const audioFormats = streamingData.adaptive_formats
+      .filter(f => f.has_audio && !f.has_video)
+      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+    const selectedFormat = audioFormats[0];
+
+    if (!selectedFormat || !selectedFormat.url) {
+      return res.status(404).json({ success: false, message: 'Direct stream URL tidak ditemukan' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: format.url,
-      mime_type: format.mime_type,
-      bitrate: format.bitrate
+      stream_url: selectedFormat.url,
+      mime_type: selectedFormat.mime_type,
+      bitrate: selectedFormat.bitrate
     });
   } catch (error) {
     console.error('Stream Error:', error);
