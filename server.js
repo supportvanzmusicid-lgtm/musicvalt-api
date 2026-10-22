@@ -17,7 +17,7 @@ async function getYouTubeClient() {
   return ytInstance;
 }
 
-// Helper untuk memaksa cover album/lagu ke resolusi HD (1080p)
+// Helper untuk memaksa gambar/cover/foto profil ke resolusi HD (1080p)
 function getHDCoverUrl(thumbnails) {
   if (!thumbnails || thumbnails.length === 0) return null;
   
@@ -35,7 +35,7 @@ function getHDCoverUrl(thumbnails) {
   return url;
 }
 
-// Endpoint YouTube Music Search (Judul, Nama Artist, Album, Durasi, & Cover HD)
+// 1. Endpoint Pencarian Lagu (Search Songs)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -69,12 +69,46 @@ app.get('/api/youtube/search', async (req, res) => {
       results: formattedSongs
     });
   } catch (error) {
-    console.error('YouTube API Error:', error);
+    console.error('YouTube Song Search Error:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Endpoint GitHub Releases
+// 2. Endpoint Pencarian Artist & Foto Profil HD (Search Artists)
+app.get('/api/youtube/search/artist', async (req, res) => {
+  try {
+    const query = req.query.q || 'Tulus';
+    const yt = await getYouTubeClient();
+    
+    // Melakukan pencarian khusus tipe artist
+    const searchResults = await yt.music.search(query, { type: 'artist' });
+
+    const formattedArtists = (searchResults.artists?.contents || searchResults.contents || []).map(artist => {
+      const thumbnails = artist.thumbnails || artist.thumbnail || [];
+      const hdProfilePic = getHDCoverUrl(thumbnails);
+
+      return {
+        id: artist.id || artist.channel_id,
+        name: artist.name || artist.title,
+        subscribers: artist.subscribers?.text || artist.subtitle?.text || null,
+        profile_picture_hd: hdProfilePic,
+        thumbnails: thumbnails
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      query: query,
+      total_results: formattedArtists.length,
+      results: formattedArtists
+    });
+  } catch (error) {
+    console.error('YouTube Artist Search Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. Endpoint GitHub Releases
 app.get('/api/github/releases', async (req, res) => {
   try {
     const owner = req.query.owner || 'octocat';
