@@ -9,9 +9,10 @@ let ytInstance = null;
 
 async function getYouTubeClient() {
   if (!ytInstance) {
+    // PENTING: Menggunakan client_type 'IOS' untuk bypass blokir 403 IP Vercel/Datacenter
     ytInstance = await Innertube.create({
-      retrieve_player: true, // Wajib true untuk decipher signature YouTube
-      generate_session_locality: true,
+      client_type: 'IOS',
+      retrieve_player: true,
       cache: new UniversalCache(false)
     });
   }
@@ -42,7 +43,7 @@ function parseDurationToSeconds(durationText) {
   return 0;
 }
 
-// 1. Endpoint Search Lagu Resmi
+// 1. Endpoint Search Lagu
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -90,7 +91,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream (FIX 30 DETIK - Menggunakan Decipher Format & Fallback URL)
+// 2. Endpoint Stream (Bebas 403 dengan Client iOS)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -101,30 +102,22 @@ app.get('/api/youtube/stream', async (req, res) => {
     const yt = await getYouTubeClient();
     const info = await yt.getInfo(videoId);
 
-    // Ambil format audio terbaik yang berdurasi penuh
+    // Pilih format audio terbaik
     const format = info.chooseFormat({
       type: 'audio',
       quality: 'best'
     });
 
-    if (!format) {
+    if (!format || !format.url) {
       return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
-    }
-
-    // Dapatkan URL yang sudah di-decipher oleh InnerTube
-    const streamUrl = format.decipher(yt.session.player);
-
-    if (!streamUrl) {
-      return res.status(404).json({ success: false, message: 'Gagal mendecipher stream URL' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: streamUrl,
+      stream_url: format.url,
       mime_type: format.mime_type,
-      bitrate: format.bitrate,
-      duration_ms: format.approx_duration_ms
+      bitrate: format.bitrate
     });
   } catch (error) {
     console.error('Stream Error:', error);
@@ -133,7 +126,14 @@ app.get('/api/youtube/stream', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Running' });
+  return res.json({ status: 'Online', message: 'MusicValt API Running Smoothly' });
 });
 
 export default app;
+
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+  });
+}
