@@ -17,7 +17,7 @@ async function getYouTubeClient() {
   return ytInstance;
 }
 
-// Helper untuk memaksa gambar/cover/foto profil ke resolusi HD (1080p)
+// Helper untuk memaksa cover ke resolusi HD (1080p)
 function getHDCoverUrl(thumbnails) {
   if (!thumbnails || thumbnails.length === 0) return null;
   
@@ -35,32 +35,53 @@ function getHDCoverUrl(thumbnails) {
   return url;
 }
 
-// 1. Endpoint Pencarian Lagu (Search Songs)
+// Helper untuk mengubah string durasi (contoh: "3:45") menjadi total detik
+function parseDurationToSeconds(durationText) {
+  if (!durationText) return 0;
+  const parts = durationText.split(':').map(Number);
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  return 0;
+}
+
+// 1. Endpoint Pencarian Lagu (Dengan Filter Anti-30 Detik)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
     const yt = await getYouTubeClient();
     
     const searchResults = await yt.music.search(query, { type: 'song' });
+    const rawSongs = searchResults.songs?.contents || searchResults.contents || [];
 
-    const formattedSongs = (searchResults.songs?.contents || searchResults.contents || []).map(song => {
-      const artistName = song.artists 
-        ? song.artists.map(a => a.name).join(', ') 
-        : (song.author?.name || 'Unknown Artist');
+    const formattedSongs = rawSongs
+      .map(song => {
+        const artistName = song.artists 
+          ? song.artists.map(a => a.name).join(', ') 
+          : (song.author?.name || 'Unknown Artist');
 
-      const thumbnails = song.thumbnails || song.thumbnail || [];
-      const hdCover = getHDCoverUrl(thumbnails);
+        const thumbnails = song.thumbnails || song.thumbnail || [];
+        const hdCover = getHDCoverUrl(thumbnails);
+        const durationText = song.duration?.text || null;
 
-      return {
-        id: song.id || song.videoId,
-        title: song.title || song.name,
-        artist: artistName,
-        album: song.album?.name || null,
-        duration: song.duration?.text || null,
-        cover_hd: hdCover,
-        thumbnails: thumbnails
-      };
-    });
+        return {
+          id: song.id || song.videoId,
+          title: song.title || song.name,
+          artist: artistName,
+          album: song.album?.name || null,
+          duration: durationText,
+          duration_seconds: parseDurationToSeconds(durationText),
+          cover_hd: hdCover,
+          thumbnails: thumbnails
+        };
+      })
+      // FILTER UTAMA: Buang lagu di bawah 45 detik (mencegah lagu 30 detik / shorts / teaser masuk)
+      .filter(song => {
+        if (song.duration_seconds === 0) return true; // Biarkan jika durasi tidak terbaca tapi valid
+        return song.duration_seconds > 45;
+      });
 
     return res.status(200).json({
       success: true,
@@ -74,20 +95,19 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Pencarian Artist & Foto Profil HD (Search Artists)
+// 2. Endpoint Pencarian Artist & Foto Profil HD
 app.get('/api/youtube/search/artist', async (req, res) => {
   try {
     const query = req.query.q || 'Tulus';
     const yt = await getYouTubeClient();
     
-    // Melakukan pencarian khusus tipe artist
     const searchResults = await yt.music.search(query, { type: 'artist' });
 
     const formattedArtists = (searchResults.artists?.contents || searchResults.contents || []).map(artist => {
       const thumbnails = artist.thumbnails || artist.thumbnail || [];
       const hdProfilePic = getHDCoverUrl(thumbnails);
 
-      return {
+5      return {
         id: artist.id || artist.channel_id,
         name: artist.name || artist.title,
         subscribers: artist.subscribers?.text || artist.subtitle?.text || null,
