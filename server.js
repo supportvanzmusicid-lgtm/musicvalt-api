@@ -4,7 +4,7 @@ import axios from 'axios';
 const app = express();
 app.use(express.json());
 
-// Daftar server publik Piped terbaru yang lebih stabil
+// Daftar server publik Piped terbaru
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.privacy.com.de',
@@ -20,7 +20,7 @@ async function fetchFromPiped(endpoint, params = {}) {
       const response = await axios.get(`${instance}${endpoint}`, {
         params,
         headers: { 'User-Agent': 'Mozilla/5.0' },
-        timeout: 5000 // Timeout 5 detik per server agar cepat pindah jika mati
+        timeout: 5000
       });
       return response.data;
     } catch (err) {
@@ -40,12 +40,13 @@ function formatSecondsToDuration(seconds) {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-// 1. Endpoint Search Lagu
+// 1. Endpoint Search Lagu (Tanpa filter ketat agar tidak 0 results)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release';
     
-    const data = await fetchFromPiped('/search', { q: query, filter: 'music' });
+    // Hapus filter 'music' agar server Piped tidak mengembalikan data kosong
+    const data = await fetchFromPiped('/search', { q: query });
     const items = data.items || [];
 
     const formattedSongs = items
@@ -138,7 +139,7 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Running with Updated Piped Instances' });
+  return res.json({ status: 'Online', message: 'MusicValt API Running Smoothly' });
 });
 
 export default app;
