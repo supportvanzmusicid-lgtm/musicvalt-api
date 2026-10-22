@@ -1,6 +1,6 @@
-const express = require('express');
-const axios = require('axios');
-const { Innertube } = require('youtubei.js');
+import express from 'express';
+import axios from 'axios';
+import { Innertube } from 'youtubei.js';
 
 const app = express();
 app.use(express.json());
@@ -10,13 +10,14 @@ let ytInstance = null;
 async function getYouTubeClient() {
   if (!ytInstance) {
     ytInstance = await Innertube.create({
+      retrieve_player: false, // Menghindari error pembacaan parser JS ekstra di Vercel
       generate_session_locality: true
     });
   }
   return ytInstance;
 }
 
-// Endpoint YouTube Search
+// Endpoint YouTube Search / Release
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -41,7 +42,7 @@ app.get('/api/github/releases', async (req, res) => {
     const repo = req.query.repo || 'Hello-World';
     
     const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}/releases`, {
-      headers: { 'User-Agent': 'Vanz-Music-Backend' }
+      headers: { 'User-Agent': 'MusicValt-API' }
     });
 
     return res.status(200).json({
@@ -54,7 +55,14 @@ app.get('/api/github/releases', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.json({ status: 'Online', message: 'Vanz Music API Server' });
+  res.json({ status: 'Online', message: 'MusicValt Backend API Running' });
 });
 
-module.exports = app;
+export default app;
+
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+  });
+}
