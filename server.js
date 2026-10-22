@@ -10,7 +10,7 @@ let ytInstance = null;
 async function getYouTubeClient() {
   if (!ytInstance) {
     ytInstance = await Innertube.create({
-      retrieve_player: true, // DISET TRUE SUPAYA TIDAK KENA 30 DETIK (FULL LAGU)
+      retrieve_player: true, // Wajib true agar dekripsi audio aktif (tidak 30 detik)
       generate_session_locality: true
     });
   }
@@ -47,14 +47,29 @@ function parseDurationToSeconds(durationText) {
   return 0;
 }
 
-// 1. Endpoint Pencarian Lagu (Dilengkapi Fallback Artist & Filter Anti-30 Detik)
+// 1. Endpoint Pencarian Lagu (Diperketat agar tidak ngasal & bersih dari shorts)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
     const yt = await getYouTubeClient();
     
     const searchResults = await yt.music.search(query, { type: 'song' });
-    const rawSongs = searchResults.songs?.contents || searchResults.contents || [];
+    
+    // Ambil secara spesifik dari songs.contents atau telusuri shelf yang valid
+    let rawSongs = [];
+    if (searchResults.songs && searchResults.songs.contents) {
+      rawSongs = searchResults.songs.contents;
+    } else if (searchResults.contents) {
+      for (const shelf of searchResults.contents) {
+        if (shelf.contents && Array.isArray(shelf.contents)) {
+          rawSongs = shelf.contents;
+          break;
+        }
+      }
+      if (rawSongs.length === 0) {
+        rawSongs = searchResults.contents;
+      }
+    }
 
     const formattedSongs = rawSongs
       .map(song => {
@@ -81,9 +96,11 @@ app.get('/api/youtube/search', async (req, res) => {
           cover_hd: hdCover
         };
       })
+      // FILTER KETAT: Wajib punya ID, durasi valid, dan dibuang jika di bawah 45 detik (shorts/preview)
       .filter(song => {
-        if (song.duration_seconds === 0) return true;
-        return song.duration_seconds > 45;
+        if (!song.id) return false;
+        if (song.duration_seconds > 0 && song.duration_seconds <= 45) return false;
+        return true;
       });
 
     return res.status(200).json({
@@ -131,7 +148,7 @@ app.get('/api/youtube/search/artist', async (req, res) => {
   }
 });
 
-// 3. Endpoint Stream Audio Full Durasi (Decryption Aktif)
+// 3. Endpoint Stream Audio Full Durasi
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
