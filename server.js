@@ -4,7 +4,33 @@ import axios from 'axios';
 const app = express();
 app.use(express.json());
 
-const PIPED_API = 'https://pipedapi.kavin.rocks';
+// Daftar server publik Piped cadangan (Fallback list)
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.simpleprivacy.fr',
+  'https://piped-api.privacy.com.de',
+  'https://pipedapi.astrid.tf'
+];
+
+// Helper untuk request dengan sistem rotasi server cadangan
+async function fetchFromPiped(endpoint, params = {}) {
+  let lastError = null;
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      const response = await axios.get(`${instance}${endpoint}`, {
+        params,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: 6000 // Timeout 6 detik per server
+      });
+      return response.data;
+    } catch (err) {
+      lastError = err.message;
+      console.warn(`Instance ${instance} gagal, mencoba cadangan lain...`);
+      continue;
+    }
+  }
+  throw new Error(`Semua server Piped gagal. Error terakhir: ${lastError}`);
+}
 
 // Helper untuk format durasi detik ke "MM:SS"
 function formatSecondsToDuration(seconds) {
@@ -14,21 +40,17 @@ function formatSecondsToDuration(seconds) {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-// 1. Endpoint Search Lagu via Piped API
+// 1. Endpoint Search Lagu
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release';
     
-    const response = await axios.get(`${PIPED_API}/search`, {
-      params: { q: query, filter: 'music' },
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
+    const data = await fetchFromPiped('/search', { q: query, filter: 'music' });
+    const items = data.items || [];
 
-    const items = response.data.items || [];
     const formattedSongs = items
       .filter(item => item.type === 'stream' && item.duration > 45) // Buang shorts / video < 45 detik
       .map(item => {
-        // Ekstrak ID dari URL item (format: /watch?v=VIDEO_ID)
         let videoId = item.id;
         if (!videoId && item.url) {
           videoId = item.url.replace('/watch?v=', '');
@@ -63,7 +85,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Audio Full Durasi via Piped API
+// 2. Endpoint Stream Audio Full Durasi
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -71,13 +93,9 @@ app.get('/api/youtube/stream', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Parameter id wajib diisi!' });
     }
 
-    const response = await axios.get(`${PIPED_API}/streams/${videoId}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-
-    const audioStreams = response.data.audioStreams || [];
+    const data = await fetchFromPiped(`/streams/${videoId}`);
+    const audioStreams = data.audioStreams || [];
     
-    // Pilih format audio dengan kualitas bitrate tertinggi
     const bestAudio = audioStreams
       .filter(stream => stream.url)
       .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
@@ -120,7 +138,7 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Running Smoothly via Piped' });
+  return res.json({ status: 'Online', message: 'MusicValt API Running with Multi-Instance Fallback' });
 });
 
 export default app;
