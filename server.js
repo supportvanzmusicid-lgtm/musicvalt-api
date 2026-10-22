@@ -9,7 +9,9 @@ let ytInstance = null;
 
 async function getYouTubeClient() {
   if (!ytInstance) {
+    // Menggunakan client_type 'ANDROID' agar streaming URL langsung terbuka tanpa enkripsi player
     ytInstance = await Innertube.create({
+      client_type: 'ANDROID',
       cache: new UniversalCache(false)
     });
   }
@@ -91,7 +93,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Audio Full Durasi (Stabil menggunakan getBasicInfo)
+// 2. Endpoint Stream Audio Full Durasi (Stabil dengan Client Android)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -103,7 +105,7 @@ app.get('/api/youtube/stream', async (req, res) => {
 
     let info;
     try {
-      info = await yt.getBasicInfo(videoId);
+      info = await yt.getInfo(videoId);
     } catch (err) {
       return res.status(400).json({ 
         success: false, 
@@ -111,31 +113,21 @@ app.get('/api/youtube/stream', async (req, res) => {
       });
     }
 
-    const streamingData = info.streaming_data;
-    if (!streamingData) {
-      return res.status(404).json({ success: false, message: 'Streaming data tidak ditemukan' });
-    }
+    const format = info.chooseFormat({
+      type: 'audio',
+      quality: 'best'
+    });
 
-    // Gabungkan dan filter format audio yang memiliki URL langsung
-    const allFormats = [
-      ...(streamingData.formats || []),
-      ...(streamingData.adaptive_formats || [])
-    ].filter(f => f.has_audio && f.url);
-
-    // Urutkan berdasarkan bitrate tertinggi
-    const audioFormats = allFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-    const selectedFormat = audioFormats[0];
-
-    if (!selectedFormat || !selectedFormat.url) {
-      return res.status(404).json({ success: false, message: 'Direct stream URL tidak ditemukan' });
+    if (!format || !format.url) {
+      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: selectedFormat.url,
-      mime_type: selectedFormat.mime_type,
-      bitrate: selectedFormat.bitrate
+      stream_url: format.url,
+      mime_type: format.mime_type,
+      bitrate: format.bitrate
     });
   } catch (error) {
     console.error('Stream Error:', error);
