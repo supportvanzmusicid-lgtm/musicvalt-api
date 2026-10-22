@@ -4,35 +4,34 @@ import axios from 'axios';
 const app = express();
 app.use(express.json());
 
-// Daftar server publik Invidious yang stabil
+// Server-server fallback yang terverifikasi aktif
 const INVIDIOUS_INSTANCES = [
   'https://inv.nadeko.net',
-  'https://vid.puffyan.us',
-  'https://yt.artemislena.eu',
-  'https://invidious.privacyredirect.com'
+  'https://invidious.nerdvpn.de',
+  'https://invidious.privacyredirect.com',
+  'https://vid.puffyan.us'
 ];
 
-// Helper untuk request dengan rotasi server cadangan Invidious
-async function fetchFromInvidious(endpoint, params = {}) {
-  let lastError = null;
+// Helper Fetch yang Aman (Tidak Crash 500 jika semua instance gagal)
+async function safeFetchInvidious(endpoint, params = {}) {
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
       const response = await axios.get(`${instance}${endpoint}`, {
         params,
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        timeout: 6000
+        headers: { 
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+        },
+        timeout: 4000 // Timeout 4 detik
       });
-      return response.data;
+      if (response.data) return response.data;
     } catch (err) {
-      lastError = err.message;
-      console.warn(`Instance Invidious ${instance} gagal, beralih ke cadangan...`);
+      console.warn(`Instance ${instance} error: ${err.message}`);
       continue;
     }
   }
-  throw new Error(`Semua server Invidious gagal. Error terakhir: ${lastError}`);
+  return null; // Return null alih-alih throw error agar tidak crash 500
 }
 
-// Helper format detik ke "MM:SS"
 function formatSecondsToDuration(seconds) {
   if (!seconds) return '0:00';
   const mins = Math.floor(seconds / 60);
@@ -40,26 +39,28 @@ function formatSecondsToDuration(seconds) {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-// 1. Endpoint Search Lagu via Invidious
+// 1. Endpoint Search Lagu (Tahan Crash)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release';
-    
-    // Invidious search endpoint mengembalikan array langsung
-    const items = await fetchFromInvidious('/api/v1/search', { q: query, type: 'video' });
-    
-    if (!Array.isArray(items)) {
-      return res.status(200).json({ success: true, query, total_results: 0, results: [] });
+    const data = await safeFetchInvidious('/api/v1/search', { q: query, type: 'video' });
+
+    if (!data || !Array.isArray(data)) {
+      return res.status(200).json({
+        success: true,
+        query: query,
+        total_results: 0,
+        results: [],
+        message: 'Layanan pencarian sedang sibuk, silakan coba lagi.'
+      });
     }
 
-    const formattedSongs = items
-      .filter(item => item.type === 'video' && item.lengthSeconds > 45) // Buang shorts / durasi < 45 detik
+    const formattedSongs = data
+      .filter(item => item.type === 'video' && (item.lengthSeconds || 0) > 45)
       .map(item => {
         let coverUrl = '';
         if (item.videoThumbnails && item.videoThumbnails.length > 0) {
-          // Ambil thumbnail kualitas tertinggi
-          const bestThumb = item.videoThumbnails[item.videoThumbnails.length - 1];
-          coverUrl = bestThumb.url || '';
+          coverUrl = item.videoThumbnails[item.videoThumbnails.length - 1].url || '';
         }
 
         if (coverUrl.includes('i.ytimg.com')) {
@@ -85,12 +86,12 @@ app.get('/api/youtube/search', async (req, res) => {
       results: formattedSongs
     });
   } catch (error) {
-    console.error('Search Error:', error.message);
-    return res.status(500).json({ success: false, error: error.message });
+    console.error('Search Catch Error:', error.message);
+    return res.status(200).json({ success: false, error: error.message, results: [] });
   }
 });
 
-// 2. Endpoint Stream Audio Full Durasi via Invidious
+// 2. Endpoint Stream Audio (Tahan Crash)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -98,4 +99,67 @@ app.get('/api/youtube/stream', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Parameter id wajib diisi!' });
     }
 
-    const data = await fetchFromInvidious(`/api/v
+    const data = await safeFetchInvidious(`/api/v1/videos/${videoId}`);
+    
+    if (!data || !data.adaptiveFormats) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Gagal mengambil data audio dari server streaming' 
+      });
+    }
+
+    const audioStreams = data.adaptiveFormats.filter(stream => 
+      stream.type && stream.type.includes('audio') && stream.url
+    );
+
+    const bestAudio = audioStreams.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0))[0];
+
+    if (!bestAudio || !bestAudio.url) {
+      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      id: videoId,
+      stream_url: bestAudio.url,
+      mime_type: bestAudio.type || 'audio/webm',
+      bitrate: Number(bestAudio.bitrate) || 128000
+    });
+  } catch (error) {
+    console.error('Stream Catch Error:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. Endpoint GitHub Releases
+app.get('/api/github/releases', async (req, res) => {
+  try {
+    const owner = req.query.owner || 'octocat';
+    const repo = req.query.repo || 'Hello-World';
+    
+    const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}/releases`, {
+      headers: { 'User-Agent': 'MusicValt-API' }
+    });
+
+    return res.status(200).json({
+      success: true,
+      releases: response.data
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Root Endpoint
+app.get('/', (req, res) => {
+  return res.json({ status: 'Online', message: 'MusicValt API Running Stable' });
+});
+
+export default app;
+
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+  });
+}
