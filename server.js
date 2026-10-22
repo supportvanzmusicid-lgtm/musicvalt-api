@@ -7,7 +7,7 @@ app.use(express.json());
 
 let ytInstance = null;
 
-// Client YouTubei.js khusus Search (WEB)
+// Client YouTubei.js khusus Search (WEB) - Sangat Stabil untuk Cari Lagu
 async function getYouTubeClient() {
   if (!ytInstance) {
     ytInstance = await Innertube.create({
@@ -17,30 +17,77 @@ async function getYouTubeClient() {
   return ytInstance;
 }
 
-// Daftar server fallback Invidious khusus Stream
+// List Instance Invidious & Piped Cadangan
 const INVIDIOUS_INSTANCES = [
   'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
   'https://invidious.privacyredirect.com',
-  'https://vid.puffyan.us'
+  'https://vid.puffyan.us',
+  'https://yt.artemislena.eu'
 ];
 
-async function safeFetchInvidious(endpoint, params = {}) {
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.privacy.com.de',
+  'https://pipedapi.smnz.de'
+];
+
+// Helper Fetch Multi-Source (Mencoba Invidious lalu Piped)
+async function getAudioStreamUrl(videoId) {
+  // 1. Coba dari Invidious Instances
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
-      const response = await axios.get(`${instance}${endpoint}`, {
-        params,
+      const response = await axios.get(`${instance}/api/v1/videos/${videoId}`, {
         headers: { 
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
         },
-        timeout: 5000
+        timeout: 4000
       });
-      if (response.data) return response.data;
+
+      if (response.data && response.data.adaptiveFormats) {
+        const audioStreams = response.data.adaptiveFormats.filter(stream => 
+          stream.type && stream.type.includes('audio') && stream.url
+        );
+        const bestAudio = audioStreams.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0))[0];
+        if (bestAudio && bestAudio.url) {
+          return {
+            stream_url: bestAudio.url,
+            mime_type: bestAudio.type || 'audio/webm',
+            bitrate: Number(bestAudio.bitrate) || 128000
+          };
+        }
+      }
     } catch (err) {
-      console.warn(`Instance ${instance} error: ${err.message}`);
+      console.warn(`Invidious instance ${instance} error: ${err.message}`);
       continue;
     }
   }
+
+  // 2. Fallback jika Invidious gagal: Coba dari Piped Instances
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      const response = await axios.get(`${instance}/streams/${videoId}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: 4000
+      });
+
+      if (response.data && response.data.audioStreams) {
+        const audioStreams = response.data.audioStreams.filter(stream => stream.url);
+        const bestAudio = audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+        if (bestAudio && bestAudio.url) {
+          return {
+            stream_url: bestAudio.url,
+            mime_type: bestAudio.mimeType || 'audio/webm',
+            bitrate: bestAudio.bitrate || 128000
+          };
+        }
+      }
+    } catch (err) {
+      console.warn(`Piped instance ${instance} error: ${err.message}`);
+      continue;
+    }
+  }
+
   return null;
 }
 
@@ -69,7 +116,7 @@ function parseDurationToSeconds(durationText) {
   return 0;
 }
 
-// 1. Endpoint Search Lagu (Menggunakan youtubei.js - Stabil & Pasti Berhasil)
+// 1. Endpoint Search Lagu (Menggunakan youtubei.js)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -117,7 +164,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Audio (Menggunakan Proxy Extractor dari ID Video Search)
+// 2. Endpoint Stream Audio (Multi-Fallback Stream Fetcher)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -125,67 +172,22 @@ app.get('/api/youtube/stream', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Parameter id wajib diisi!' });
     }
 
-    const data = await safeFetchInvidious(`/api/v1/videos/${videoId}`);
+    const streamData = await getAudioStreamUrl(videoId);
     
-    if (!data || !data.adaptiveFormats) {
+    if (!streamData) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Gagal mengunduh stream audio untuk ID ini, silakan coba lagi.' 
+        message: 'Gagal mengunduh stream audio dari seluruh server cadangan, silakan coba beberapa saat lagi.' 
       });
-    }
-
-    const audioStreams = data.adaptiveFormats.filter(stream => 
-      stream.type && stream.type.includes('audio') && stream.url
-    );
-
-    const bestAudio = audioStreams.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0))[0];
-
-    if (!bestAudio || !bestAudio.url) {
-      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: bestAudio.url,
-      mime_type: bestAudio.type || 'audio/webm',
-      bitrate: Number(bestAudio.bitrate) || 128000
+      stream_url: streamData.stream_url,
+      mime_type: streamData.mime_type,
+      bitrate: streamData.bitrate
     });
   } catch (error) {
     console.error('Stream Error:', error.message);
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// 3. Endpoint GitHub Releases
-app.get('/api/github/releases', async (req, res) => {
-  try {
-    const owner = req.query.owner || 'octocat';
-    const repo = req.query.repo || 'Hello-World';
-    
-    const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}/releases`, {
-      headers: { 'User-Agent': 'MusicValt-API' }
-    });
-
-    return res.status(200).json({
-      success: true,
-      releases: response.data
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Root Endpoint
-app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Hybrid Running' });
-});
-
-export default app;
-
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
-  });
-}
+    return res.status(500).json({
