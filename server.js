@@ -77,9 +77,9 @@ app.get('/api/youtube/search', async (req, res) => {
           thumbnails: thumbnails
         };
       })
-      // FILTER UTAMA: Buang lagu di bawah 45 detik (mencegah lagu 30 detik / shorts / teaser masuk)
+      // FILTER: Buang lagu di bawah 45 detik (mencegah shorts / preview 30 detik masuk)
       .filter(song => {
-        if (song.duration_seconds === 0) return true; // Biarkan jika durasi tidak terbaca tapi valid
+        if (song.duration_seconds === 0) return true;
         return song.duration_seconds > 45;
       });
 
@@ -107,7 +107,7 @@ app.get('/api/youtube/search/artist', async (req, res) => {
       const thumbnails = artist.thumbnails || artist.thumbnail || [];
       const hdProfilePic = getHDCoverUrl(thumbnails);
 
-5      return {
+      return {
         id: artist.id || artist.channel_id,
         name: artist.name || artist.title,
         subscribers: artist.subscribers?.text || artist.subtitle?.text || null,
