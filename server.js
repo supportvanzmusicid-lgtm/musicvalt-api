@@ -5,31 +5,18 @@ import { Innertube, UniversalCache } from 'youtubei.js';
 const app = express();
 app.use(express.json());
 
-let searchClient = null;
-let streamClient = null;
+let ytInstance = null;
 
-// Client khusus Search (WEB)
-async function getSearchClient() {
-  if (!searchClient) {
-    searchClient = await Innertube.create({
+async function getYouTubeClient() {
+  if (!ytInstance) {
+    ytInstance = await Innertube.create({
       cache: new UniversalCache(false)
     });
   }
-  return searchClient;
+  return ytInstance;
 }
 
-// Client khusus Stream (IOS - Bypass proteksi streaming data)
-async function getStreamClient() {
-  if (!streamClient) {
-    streamClient = await Innertube.create({
-      client_type: 'IOS',
-      cache: new UniversalCache(false)
-    });
-  }
-  return streamClient;
-}
-
-// Helper untuk memaksa cover ke resolusi HD (1080p)
+// Helper untuk memaksa cover / foto profil ke resolusi HD (1080p)
 function getHDCoverUrl(thumbnails) {
   if (!thumbnails || thumbnails.length === 0) return null;
   const lastThumb = thumbnails[thumbnails.length - 1];
@@ -46,7 +33,7 @@ function getHDCoverUrl(thumbnails) {
   return url;
 }
 
-// Helper untuk mengubah string durasi menjadi total detik
+// Helper untuk mengubah string durasi (contoh: "3:45") menjadi total detik
 function parseDurationToSeconds(durationText) {
   if (!durationText) return 0;
   const parts = durationText.split(':').map(Number);
@@ -55,11 +42,11 @@ function parseDurationToSeconds(durationText) {
   return 0;
 }
 
-// 1. Endpoint Search Lagu (Menggunakan Search Client)
+// 1. Endpoint Pencarian Lagu
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
-    const yt = await getSearchClient();
+    const yt = await getYouTubeClient();
     
     const searchResults = await yt.music.search(query, { type: 'song' });
     const rawSongs = searchResults.songs?.contents || searchResults.contents || [];
@@ -104,7 +91,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Audio Full Durasi (Menggunakan Stream Client / IOS)
+// 2. Endpoint Stream Audio Full Durasi (Stabil menggunakan getBasicInfo)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -112,33 +99,43 @@ app.get('/api/youtube/stream', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Parameter id wajib diisi!' });
     }
 
-    const yt = await getStreamClient();
+    const yt = await getYouTubeClient();
 
     let info;
     try {
-      info = await yt.getInfo(videoId);
+      info = await yt.getBasicInfo(videoId);
     } catch (err) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Gagal mengambil info video: ' + err.message 
+        message: 'ID Video tidak valid atau gagal mengambil info lagu: ' + err.message 
       });
     }
 
-    const format = info.chooseFormat({
-      type: 'audio',
-      quality: 'best'
-    });
+    const streamingData = info.streaming_data;
+    if (!streamingData) {
+      return res.status(404).json({ success: false, message: 'Streaming data tidak ditemukan' });
+    }
 
-    if (!format || !format.url) {
-      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
+    // Gabungkan dan filter format audio yang memiliki URL langsung
+    const allFormats = [
+      ...(streamingData.formats || []),
+      ...(streamingData.adaptive_formats || [])
+    ].filter(f => f.has_audio && f.url);
+
+    // Urutkan berdasarkan bitrate tertinggi
+    const audioFormats = allFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+    const selectedFormat = audioFormats[0];
+
+    if (!selectedFormat || !selectedFormat.url) {
+      return res.status(404).json({ success: false, message: 'Direct stream URL tidak ditemukan' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: format.url,
-      mime_type: format.mime_type,
-      bitrate: format.bitrate
+      stream_url: selectedFormat.url,
+      mime_type: selectedFormat.mime_type,
+      bitrate: selectedFormat.bitrate
     });
   } catch (error) {
     console.error('Stream Error:', error);
