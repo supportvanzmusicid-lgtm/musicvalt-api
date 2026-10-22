@@ -7,51 +7,47 @@ app.use(express.json());
 
 let ytInstance = null;
 
-// Helper untuk inisialisasi client YouTube Music
 async function getYouTubeClient() {
   if (!ytInstance) {
     ytInstance = await Innertube.create({
-      retrieve_player: false, // Hemat memori di Vercel
+      retrieve_player: false,
       generate_session_locality: true
     });
   }
   return ytInstance;
 }
 
-// Helper untuk mendapatkan gambar/cover resolusi tinggi (HD)
+// Helper untuk memaksa cover album/lagu ke resolusi HD (1080p)
 function getHDCoverUrl(thumbnails) {
   if (!thumbnails || thumbnails.length === 0) return null;
-  // Mengambil thumbnail dengan resolusi tertinggi dari array
+  
   const lastThumb = thumbnails[thumbnails.length - 1];
-  let url = lastThumb.url;
+  let url = lastThumb.url || lastThumb;
 
-  // Mengubah parameter ukuran pada URL YouTube agar menghasilkan kualitas HD/Maxres
-  if (url.includes('lh3.googleusercontent.com') || url.includes('yt3.ggpht.com')) {
-    url = url.replace(/=w\d+-h\d+/, '=w1080-h1080');
+  if (typeof url !== 'string') return null;
+
+  if (url.includes('googleusercontent.com') || url.includes('ggpht.com')) {
+    url = url.split('=')[0] + '=w1080-h1080-l90-rj';
   } else if (url.includes('i.ytimg.com')) {
-    url = url.replace(/hqdefault|mqdefault|default/, 'maxresdefault');
+    url = url.replace(/\/vi\/([^\/]+)\/.*/, '/vi/$1/maxresdefault.jpg');
   }
 
   return url;
 }
 
-// 1. Endpoint YouTube Music Search (Termasuk Cover HD, Title, Artist, & ID)
+// Endpoint YouTube Music Search (Judul, Nama Artist, Album, Durasi, & Cover HD)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
     const yt = await getYouTubeClient();
     
-    // Melakukan pencarian khusus katalog lagu YouTube Music
     const searchResults = await yt.music.search(query, { type: 'song' });
 
-    // Format output data agar rapi dan lengkap
     const formattedSongs = (searchResults.songs?.contents || searchResults.contents || []).map(song => {
-      // Pembacaan nama artist dari properti artists atau authors
       const artistName = song.artists 
         ? song.artists.map(a => a.name).join(', ') 
         : (song.author?.name || 'Unknown Artist');
 
-      // Ambil Thumbnail & ubah ke HD
       const thumbnails = song.thumbnails || song.thumbnail || [];
       const hdCover = getHDCoverUrl(thumbnails);
 
@@ -62,7 +58,7 @@ app.get('/api/youtube/search', async (req, res) => {
         album: song.album?.name || null,
         duration: song.duration?.text || null,
         cover_hd: hdCover,
-        thumbnails: thumbnails // Menyimpan array thumbnail asli sebagai cadangan
+        thumbnails: thumbnails
       };
     });
 
@@ -78,7 +74,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint GitHub Releases
+// Endpoint GitHub Releases
 app.get('/api/github/releases', async (req, res) => {
   try {
     const owner = req.query.owner || 'octocat';
@@ -99,7 +95,7 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  res.json({ status: 'Online', message: 'MusicValt API Running' });
+  return res.json({ status: 'Online', message: 'MusicValt Backend API Running Smoothly!' });
 });
 
 export default app;
