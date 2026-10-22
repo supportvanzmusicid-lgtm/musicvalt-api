@@ -1,7 +1,6 @@
 {
   "name": "musicvalt-api",
   "version": "1.0.0",
-  "description": "YouTube Music & GitHub API Service",
   "type": "module",
   "main": "server.js",
   "scripts": {
