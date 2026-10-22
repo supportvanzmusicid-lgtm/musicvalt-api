@@ -1,85 +1,55 @@
 import express from 'express';
 import axios from 'axios';
-import { Innertube, UniversalCache } from 'youtubei.js';
 
 const app = express();
 app.use(express.json());
 
-let ytInstance = null;
+const PIPED_API = 'https://pipedapi.kavin.rocks';
 
-async function getYouTubeClient() {
-  if (!ytInstance) {
-    // Menggunakan client_type 'ANDROID' agar streaming URL langsung terbuka tanpa enkripsi player
-    ytInstance = await Innertube.create({
-      client_type: 'ANDROID',
-      cache: new UniversalCache(false)
-    });
-  }
-  return ytInstance;
+// Helper untuk format durasi detik ke "MM:SS"
+function formatSecondsToDuration(seconds) {
+  if (!seconds) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
-// Helper untuk memaksa cover / foto profil ke resolusi HD (1080p)
-function getHDCoverUrl(thumbnails) {
-  if (!thumbnails || thumbnails.length === 0) return null;
-  const lastThumb = thumbnails[thumbnails.length - 1];
-  let url = lastThumb.url || lastThumb;
-
-  if (typeof url !== 'string') return null;
-
-  if (url.includes('googleusercontent.com') || url.includes('ggpht.com')) {
-    url = url.split('=')[0] + '=w1080-h1080-l90-rj';
-  } else if (url.includes('i.ytimg.com')) {
-    url = url.replace(/\/vi\/([^\/]+)\/.*/, '/vi/$1/maxresdefault.jpg');
-  }
-
-  return url;
-}
-
-// Helper untuk mengubah string durasi (contoh: "3:45") menjadi total detik
-function parseDurationToSeconds(durationText) {
-  if (!durationText) return 0;
-  const parts = durationText.split(':').map(Number);
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  return 0;
-}
-
-// 1. Endpoint Pencarian Lagu
+// 1. Endpoint Search Lagu via Piped API
 app.get('/api/youtube/search', async (req, res) => {
   try {
-    const query = req.query.q || 'Official Release Topic';
-    const yt = await getYouTubeClient();
+    const query = req.query.q || 'Official Release';
     
-    const searchResults = await yt.music.search(query, { type: 'song' });
-    const rawSongs = searchResults.songs?.contents || searchResults.contents || [];
+    const response = await axios.get(`${PIPED_API}/search`, {
+      params: { q: query, filter: 'music' },
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
 
-    const formattedSongs = rawSongs
-      .map(song => {
-        let artistName = 'Unknown Artist';
-        if (song.artists && Array.isArray(song.artists) && song.artists.length > 0) {
-          artistName = song.artists.map(a => a.name).join(', ');
-        } else if (song.author) {
-          artistName = typeof song.author === 'string' ? song.author : (song.author.name || 'Unknown Artist');
-        } else if (song.subtitle) {
-          artistName = typeof song.subtitle === 'string' ? song.subtitle : (song.subtitle.text || 'Unknown Artist');
+    const items = response.data.items || [];
+    const formattedSongs = items
+      .filter(item => item.type === 'stream' && item.duration > 45) // Buang shorts / video < 45 detik
+      .map(item => {
+        // Ekstrak ID dari URL item (format: /watch?v=VIDEO_ID)
+        let videoId = item.id;
+        if (!videoId && item.url) {
+          videoId = item.url.replace('/watch?v=', '');
         }
 
-        const thumbnails = song.thumbnails || song.thumbnail || [];
-        const hdCover = getHDCoverUrl(thumbnails);
-        const durationText = song.duration?.text || null;
+        let coverUrl = item.thumbnail || '';
+        if (coverUrl.includes('i.ytimg.com')) {
+          coverUrl = coverUrl.replace(/\/vi\/([^\/]+)\/.*/, '/vi/$1/maxresdefault.jpg');
+        }
 
         return {
-          id: song.id || song.videoId,
-          title: song.title || song.name || 'Unknown Title',
-          artist: artistName,
-          album: song.album?.name || null,
-          duration: durationText,
-          duration_seconds: parseDurationToSeconds(durationText),
-          cover_hd: hdCover
+          id: videoId,
+          title: item.title || 'Unknown Title',
+          artist: item.uploaderName || 'Unknown Artist',
+          album: null,
+          duration: formatSecondsToDuration(item.duration),
+          duration_seconds: item.duration,
+          cover_hd: coverUrl
         };
       })
-      // Filter lagu di bawah 45 detik untuk membuang shorts / preview
-      .filter(song => song.id && song.duration_seconds > 45);
+      .filter(song => song.id);
 
     return res.status(200).json({
       success: true,
@@ -88,12 +58,12 @@ app.get('/api/youtube/search', async (req, res) => {
       results: formattedSongs
     });
   } catch (error) {
-    console.error('Search Error:', error);
+    console.error('Search Error:', error.message);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// 2. Endpoint Stream Audio Full Durasi (Stabil dengan Client Android)
+// 2. Endpoint Stream Audio Full Durasi via Piped API
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -101,36 +71,30 @@ app.get('/api/youtube/stream', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Parameter id wajib diisi!' });
     }
 
-    const yt = await getYouTubeClient();
-
-    let info;
-    try {
-      info = await yt.getInfo(videoId);
-    } catch (err) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'ID Video tidak valid atau gagal mengambil info lagu: ' + err.message 
-      });
-    }
-
-    const format = info.chooseFormat({
-      type: 'audio',
-      quality: 'best'
+    const response = await axios.get(`${PIPED_API}/streams/${videoId}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
     });
 
-    if (!format || !format.url) {
-      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
+    const audioStreams = response.data.audioStreams || [];
+    
+    // Pilih format audio dengan kualitas bitrate tertinggi
+    const bestAudio = audioStreams
+      .filter(stream => stream.url)
+      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+
+    if (!bestAudio || !bestAudio.url) {
+      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan untuk video ini' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: format.url,
-      mime_type: format.mime_type,
-      bitrate: format.bitrate
+      stream_url: bestAudio.url,
+      mime_type: bestAudio.mimeType || 'audio/webm',
+      bitrate: bestAudio.bitrate || 128000
     });
   } catch (error) {
-    console.error('Stream Error:', error);
+    console.error('Stream Error:', error.message);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -156,7 +120,7 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Running Smoothly' });
+  return res.json({ status: 'Online', message: 'MusicValt API Running Smoothly via Piped' });
 });
 
 export default app;
