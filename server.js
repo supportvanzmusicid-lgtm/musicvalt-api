@@ -4,12 +4,12 @@ import axios from 'axios';
 const app = express();
 app.use(express.json());
 
-// Daftar server publik Piped cadangan (Fallback list)
+// Daftar server publik Piped terbaru yang lebih stabil
 const PIPED_INSTANCES = [
   'https://pipedapi.kavin.rocks',
-  'https://pipedapi.simpleprivacy.fr',
-  'https://piped-api.privacy.com.de',
-  'https://pipedapi.astrid.tf'
+  'https://pipedapi.privacy.com.de',
+  'https://pipedapi.smnz.de',
+  'https://pipedapi.in.projectsegfau.lt'
 ];
 
 // Helper untuk request dengan sistem rotasi server cadangan
@@ -20,12 +20,12 @@ async function fetchFromPiped(endpoint, params = {}) {
       const response = await axios.get(`${instance}${endpoint}`, {
         params,
         headers: { 'User-Agent': 'Mozilla/5.0' },
-        timeout: 6000 // Timeout 6 detik per server
+        timeout: 5000 // Timeout 5 detik per server agar cepat pindah jika mati
       });
       return response.data;
     } catch (err) {
       lastError = err.message;
-      console.warn(`Instance ${instance} gagal, mencoba cadangan lain...`);
+      console.warn(`Instance ${instance} gagal, beralih ke cadangan...`);
       continue;
     }
   }
@@ -138,7 +138,7 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Running with Multi-Instance Fallback' });
+  return res.json({ status: 'Online', message: 'MusicValt API Running with Updated Piped Instances' });
 });
 
 export default app;
