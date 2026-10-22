@@ -1,126 +1,99 @@
 import express from 'express';
 import axios from 'axios';
+import { Innertube, UniversalCache } from 'youtubei.js';
 
 const app = express();
 app.use(express.json());
 
-// Jaringan Server Proxy Publik (Rotasi Otomatis)
-const INVIDIOUS_INSTANCES = [
-  'https://inv.nadeko.net',
-  'https://invidious.nerdvpn.de',
-  'https://invidious.privacyredirect.com',
-  'https://vid.puffyan.us',
-  'https://yt.artemislena.eu'
-];
+let ytInstance = null;
 
-const PIPED_INSTANCES = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.privacy.com.de',
-  'https://pipedapi.smnz.de'
-];
-
-// Format durasi detik ke MM:SS
-function formatSecondsToDuration(seconds) {
-  if (!seconds) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+async function getYouTubeClient() {
+  if (!ytInstance) {
+    // Mengaktifkan retrieve_player agar player script terunduh untuk dekripsi audio full durasi
+    ytInstance = await Innertube.create({
+      retrieve_player: true,
+      cache: new UniversalCache(false)
+    });
+  }
+  return ytInstance;
 }
 
-// 1. ENDPOINT SEARCH (Bebas Crash 500 & Multi Proxy)
+// Helper untuk memaksa cover ke resolusi HD (1080p)
+function getHDCoverUrl(thumbnails) {
+  if (!thumbnails || thumbnails.length === 0) return null;
+  const lastThumb = thumbnails[thumbnails.length - 1];
+  let url = lastThumb.url || lastThumb;
+
+  if (typeof url !== 'string') return null;
+
+  if (url.includes('googleusercontent.com') || url.includes('ggpht.com')) {
+    url = url.split('=')[0] + '=w1080-h1080-l90-rj';
+  } else if (url.includes('i.ytimg.com')) {
+    url = url.replace(/\/vi\/([^\/]+)\/.*/, '/vi/$1/maxresdefault.jpg');
+  }
+
+  return url;
+}
+
+// Helper untuk mengubah string durasi menjadi total detik
+function parseDurationToSeconds(durationText) {
+  if (!durationText) return 0;
+  const parts = durationText.split(':').map(Number);
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return 0;
+}
+
+// 1. Endpoint Search Lagu
 app.get('/api/youtube/search', async (req, res) => {
   try {
-    const query = req.query.q || 'Official Release';
-    let songs = [];
+    const query = req.query.q || 'Official Release Topic';
+    const yt = await getYouTubeClient();
+    
+    const searchResults = await yt.music.search(query, { type: 'song' });
+    const rawSongs = searchResults.songs?.contents || searchResults.contents || [];
 
-    // A. Coba Search via Invidious
-    for (const instance of INVIDIOUS_INSTANCES) {
-      try {
-        const response = await axios.get(`${instance}/api/v1/search`, {
-          params: { q: query, type: 'video' },
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-          timeout: 4000
-        });
-
-        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-          songs = response.data
-            .filter(item => item.type === 'video' && (item.lengthSeconds || 0) > 45)
-            .map(item => {
-              let coverUrl = item.videoThumbnails?.[item.videoThumbnails.length - 1]?.url || '';
-              if (coverUrl.includes('i.ytimg.com')) {
-                coverUrl = coverUrl.replace(/\/vi\/([^\/]+)\/.*/, '/vi/$1/maxresdefault.jpg');
-              }
-              return {
-                id: item.videoId,
-                title: item.title || 'Unknown Title',
-                artist: item.author || 'Unknown Artist',
-                album: null,
-                duration: formatSecondsToDuration(item.lengthSeconds),
-                duration_seconds: item.lengthSeconds,
-                cover_hd: coverUrl
-              };
-            });
-          
-          if (songs.length > 0) break;
+    const formattedSongs = rawSongs
+      .map(song => {
+        let artistName = 'Unknown Artist';
+        if (song.artists && Array.isArray(song.artists) && song.artists.length > 0) {
+          artistName = song.artists.map(a => a.name).join(', ');
+        } else if (song.author) {
+          artistName = typeof song.author === 'string' ? song.author : (song.author.name || 'Unknown Artist');
+        } else if (song.subtitle) {
+          artistName = typeof song.subtitle === 'string' ? song.subtitle : (song.subtitle.text || 'Unknown Artist');
         }
-      } catch (err) {
-        continue; // Lanjut ke instance berikutnya jika error/timeout
-      }
-    }
 
-    // B. Fallback Search via Piped jika Invidious kosong/gagal
-    if (songs.length === 0) {
-      for (const instance of PIPED_INSTANCES) {
-        try {
-          const response = await axios.get(`${instance}/search`, {
-            params: { q: query },
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            timeout: 4000
-          });
+        const thumbnails = song.thumbnails || song.thumbnail || [];
+        const hdCover = getHDCoverUrl(thumbnails);
+        const durationText = song.duration?.text || null;
 
-          if (response.data && response.data.items) {
-            songs = response.data.items
-              .filter(item => item.type === 'stream' && (item.duration || 0) > 45)
-              .map(item => {
-                let vId = item.id || (item.url ? item.url.replace('/watch?v=', '') : null);
-                let coverUrl = item.thumbnail || '';
-                if (coverUrl.includes('i.ytimg.com')) {
-                  coverUrl = coverUrl.replace(/\/vi\/([^\/]+)\/.*/, '/vi/$1/maxresdefault.jpg');
-                }
-                return {
-                  id: vId,
-                  title: item.title || 'Unknown Title',
-                  artist: item.uploaderName || 'Unknown Artist',
-                  album: null,
-                  duration: formatSecondsToDuration(item.duration),
-                  duration_seconds: item.duration,
-                  cover_hd: coverUrl
-                };
-              })
-              .filter(song => song.id);
-
-            if (songs.length > 0) break;
-          }
-        } catch (err) {
-          continue;
-        }
-      }
-    }
+        return {
+          id: song.id || song.videoId,
+          title: song.title || song.name || 'Unknown Title',
+          artist: artistName,
+          album: song.album?.name || null,
+          duration: durationText,
+          duration_seconds: parseDurationToSeconds(durationText),
+          cover_hd: hdCover
+        };
+      })
+      // Filter lagu di bawah 45 detik untuk membuang shorts / preview
+      .filter(song => song.id && song.duration_seconds > 45);
 
     return res.status(200).json({
       success: true,
       query: query,
-      total_results: songs.length,
-      results: songs
+      total_results: formattedSongs.length,
+      results: formattedSongs
     });
   } catch (error) {
-    // Tangkap semua unhandled error agar TIDAK CRASH 500 di Vercel
-    console.error('Search Catch Error:', error.message);
-    return res.status(200).json({ success: false, error: error.message, results: [] });
+    console.error('Search Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// 2. ENDPOINT STREAM AUDIO (Bebas Crash 500)
+// 2. Endpoint Stream Audio Full Durasi (Menggunakan chooseFormat & Decipher yang Aman)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -128,83 +101,52 @@ app.get('/api/youtube/stream', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Parameter id wajib diisi!' });
     }
 
-    let streamData = null;
+    const yt = await getYouTubeClient();
 
-    // A. Coba Stream dari Invidious
-    for (const instance of INVIDIOUS_INSTANCES) {
-      try {
-        const response = await axios.get(`${instance}/api/v1/videos/${videoId}`, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          timeout: 4000
-        });
-
-        if (response.data && response.data.adaptiveFormats) {
-          const audioStreams = response.data.adaptiveFormats.filter(stream => 
-            stream.type && stream.type.includes('audio') && stream.url
-          );
-          const bestAudio = audioStreams.sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0))[0];
-          if (bestAudio && bestAudio.url) {
-            streamData = {
-              stream_url: bestAudio.url,
-              mime_type: bestAudio.type || 'audio/webm',
-              bitrate: Number(bestAudio.bitrate) || 128000
-            };
-            break;
-          }
-        }
-      } catch (err) {
-        continue;
-      }
-    }
-
-    // B. Fallback Stream dari Piped
-    if (!streamData) {
-      for (const instance of PIPED_INSTANCES) {
-        try {
-          const response = await axios.get(`${instance}/streams/${videoId}`, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            timeout: 4000
-          });
-
-          if (response.data && response.data.audioStreams) {
-            const audioStreams = response.data.audioStreams.filter(stream => stream.url);
-            const bestAudio = audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-            if (bestAudio && bestAudio.url) {
-              streamData = {
-                stream_url: bestAudio.url,
-                mime_type: bestAudio.mimeType || 'audio/webm',
-                bitrate: bestAudio.bitrate || 128000
-              };
-              break;
-            }
-          }
-        } catch (err) {
-          continue;
-        }
-      }
-    }
-
-    if (!streamData) {
-      return res.status(404).json({ 
+    let info;
+    try {
+      info = await yt.getInfo(videoId);
+    } catch (err) {
+      return res.status(400).json({ 
         success: false, 
-        message: 'Stream audio gagal ditarik, silakan coba beberapa saat lagi.' 
+        message: 'ID Video tidak valid atau gagal mengambil info lagu.' 
       });
+    }
+
+    // Menggunakan chooseFormat bawaan youtubei.js untuk mendapatkan format audio terbaik
+    const format = info.chooseFormat({
+      type: 'audio',
+      quality: 'best'
+    });
+
+    if (!format) {
+      return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
+    }
+
+    // Ekstrak URL (lakukan dekripsi signature jika diperlukan oleh player)
+    let streamUrl = format.url;
+    if (!streamUrl && typeof format.decipher === 'function' && yt.session && yt.session.player) {
+      streamUrl = format.decipher(yt.session.player);
+    }
+
+    if (!streamUrl) {
+      return res.status(404).json({ success: false, message: 'Direct stream URL gagal didapatkan' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: streamData.stream_url,
-      mime_type: streamData.mime_type,
-      bitrate: streamData.bitrate
+      stream_url: streamUrl,
+      mime_type: format.mime_type,
+      bitrate: format.bitrate
     });
   } catch (error) {
-    console.error('Stream Error:', error.message);
-    return res.status(200).json({ success: false, error: error.message });
+    console.error('Stream Error:', error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// 3. GitHub Releases Endpoint
+// 3. Endpoint GitHub Releases
 app.get('/api/github/releases', async (req, res) => {
   try {
     const owner = req.query.owner || 'octocat';
@@ -219,13 +161,13 @@ app.get('/api/github/releases', async (req, res) => {
       releases: response.data
     });
   } catch (error) {
-    return res.status(200).json({ success: false, error: error.message });
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Running Safe' });
+  return res.json({ status: 'Online', message: 'MusicValt API Running Smoothly' });
 });
 
 export default app;
