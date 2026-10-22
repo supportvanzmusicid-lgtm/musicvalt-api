@@ -1,10 +1,23 @@
 import express from 'express';
 import axios from 'axios';
+import { Innertube, UniversalCache } from 'youtubei.js';
 
 const app = express();
 app.use(express.json());
 
-// Server-server fallback yang terverifikasi aktif
+let ytInstance = null;
+
+// Client YouTubei.js khusus Search (WEB)
+async function getYouTubeClient() {
+  if (!ytInstance) {
+    ytInstance = await Innertube.create({
+      cache: new UniversalCache(false)
+    });
+  }
+  return ytInstance;
+}
+
+// Daftar server fallback Invidious khusus Stream
 const INVIDIOUS_INSTANCES = [
   'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
@@ -12,7 +25,6 @@ const INVIDIOUS_INSTANCES = [
   'https://vid.puffyan.us'
 ];
 
-// Helper Fetch yang Aman (Tidak Crash 500 jika semua instance gagal)
 async function safeFetchInvidious(endpoint, params = {}) {
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
@@ -21,7 +33,7 @@ async function safeFetchInvidious(endpoint, params = {}) {
         headers: { 
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
         },
-        timeout: 4000 // Timeout 4 detik
+        timeout: 5000
       });
       if (response.data) return response.data;
     } catch (err) {
@@ -29,55 +41,69 @@ async function safeFetchInvidious(endpoint, params = {}) {
       continue;
     }
   }
-  return null; // Return null alih-alih throw error agar tidak crash 500
+  return null;
 }
 
-function formatSecondsToDuration(seconds) {
-  if (!seconds) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+// Helper memaksa cover HD
+function getHDCoverUrl(thumbnails) {
+  if (!thumbnails || thumbnails.length === 0) return null;
+  const lastThumb = thumbnails[thumbnails.length - 1];
+  let url = lastThumb.url || lastThumb;
+
+  if (typeof url !== 'string') return null;
+
+  if (url.includes('googleusercontent.com') || url.includes('ggpht.com')) {
+    url = url.split('=')[0] + '=w1080-h1080-l90-rj';
+  } else if (url.includes('i.ytimg.com')) {
+    url = url.replace(/\/vi\/([^\/]+)\/.*/, '/vi/$1/maxresdefault.jpg');
+  }
+
+  return url;
 }
 
-// 1. Endpoint Search Lagu (Tahan Crash)
+function parseDurationToSeconds(durationText) {
+  if (!durationText) return 0;
+  const parts = durationText.split(':').map(Number);
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return 0;
+}
+
+// 1. Endpoint Search Lagu (Menggunakan youtubei.js - Stabil & Pasti Berhasil)
 app.get('/api/youtube/search', async (req, res) => {
   try {
-    const query = req.query.q || 'Official Release';
-    const data = await safeFetchInvidious('/api/v1/search', { q: query, type: 'video' });
+    const query = req.query.q || 'Official Release Topic';
+    const yt = await getYouTubeClient();
+    
+    const searchResults = await yt.music.search(query, { type: 'song' });
+    const rawSongs = searchResults.songs?.contents || searchResults.contents || [];
 
-    if (!data || !Array.isArray(data)) {
-      return res.status(200).json({
-        success: true,
-        query: query,
-        total_results: 0,
-        results: [],
-        message: 'Layanan pencarian sedang sibuk, silakan coba lagi.'
-      });
-    }
-
-    const formattedSongs = data
-      .filter(item => item.type === 'video' && (item.lengthSeconds || 0) > 45)
-      .map(item => {
-        let coverUrl = '';
-        if (item.videoThumbnails && item.videoThumbnails.length > 0) {
-          coverUrl = item.videoThumbnails[item.videoThumbnails.length - 1].url || '';
+    const formattedSongs = rawSongs
+      .map(song => {
+        let artistName = 'Unknown Artist';
+        if (song.artists && Array.isArray(song.artists) && song.artists.length > 0) {
+          artistName = song.artists.map(a => a.name).join(', ');
+        } else if (song.author) {
+          artistName = typeof song.author === 'string' ? song.author : (song.author.name || 'Unknown Artist');
+        } else if (song.subtitle) {
+          artistName = typeof song.subtitle === 'string' ? song.subtitle : (song.subtitle.text || 'Unknown Artist');
         }
 
-        if (coverUrl.includes('i.ytimg.com')) {
-          coverUrl = coverUrl.replace(/\/vi\/([^\/]+)\/.*/, '/vi/$1/maxresdefault.jpg');
-        }
+        const thumbnails = song.thumbnails || song.thumbnail || [];
+        const hdCover = getHDCoverUrl(thumbnails);
+        const durationText = song.duration?.text || null;
 
         return {
-          id: item.videoId,
-          title: item.title || 'Unknown Title',
-          artist: item.author || 'Unknown Artist',
-          album: null,
-          duration: formatSecondsToDuration(item.lengthSeconds),
-          duration_seconds: item.lengthSeconds,
-          cover_hd: coverUrl
+          id: song.id || song.videoId,
+          title: song.title || song.name || 'Unknown Title',
+          artist: artistName,
+          album: song.album?.name || null,
+          duration: durationText,
+          duration_seconds: parseDurationToSeconds(durationText),
+          cover_hd: hdCover
         };
       })
-      .filter(song => song.id);
+      .filter(song => song.id && song.duration_seconds > 45);
 
     return res.status(200).json({
       success: true,
@@ -86,12 +112,12 @@ app.get('/api/youtube/search', async (req, res) => {
       results: formattedSongs
     });
   } catch (error) {
-    console.error('Search Catch Error:', error.message);
-    return res.status(200).json({ success: false, error: error.message, results: [] });
+    console.error('Search Error:', error);
+    return res.status(500).json({ success: false, error: error.message, results: [] });
   }
 });
 
-// 2. Endpoint Stream Audio (Tahan Crash)
+// 2. Endpoint Stream Audio (Menggunakan Proxy Extractor dari ID Video Search)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -104,7 +130,7 @@ app.get('/api/youtube/stream', async (req, res) => {
     if (!data || !data.adaptiveFormats) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Gagal mengambil data audio dari server streaming' 
+        message: 'Gagal mengunduh stream audio untuk ID ini, silakan coba lagi.' 
       });
     }
 
@@ -126,7 +152,7 @@ app.get('/api/youtube/stream', async (req, res) => {
       bitrate: Number(bestAudio.bitrate) || 128000
     });
   } catch (error) {
-    console.error('Stream Catch Error:', error.message);
+    console.error('Stream Error:', error.message);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -152,7 +178,7 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Running Stable' });
+  return res.json({ status: 'Online', message: 'MusicValt API Hybrid Running' });
 });
 
 export default app;
