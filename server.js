@@ -19,15 +19,7 @@ const PIPED_INSTANCES = [
   'https://pipedapi.smnz.de'
 ];
 
-// Helper parsing durasi detik ke format "MM:SS"
-function formatSecondsToDuration(seconds) {
-  if (!seconds) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-}
-
-// Helper untuk mengubah text durasi "3:45" ke detik
+// Helper parsing durasi ke detik
 function parseDurationToSeconds(durationText) {
   if (!durationText) return 0;
   const parts = durationText.split(':').map(Number);
@@ -36,19 +28,18 @@ function parseDurationToSeconds(durationText) {
   return 0;
 }
 
-// 1. Endpoint Search Unlimited (Scraper Mobile YouTube InnerTube - Tanpa API Key & Tanpa Limit)
+// 1. Endpoint Search Unlimited (Youtube InnerTube WEB Client)
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release';
 
-    // Direct Request ke InnerTube Mobile Search API milik YouTube
     const response = await axios.post(
       'https://www.youtube.com/youtubei/v1/search?prettyPrint=false',
       {
         context: {
           client: {
-            clientName: 'MWEB',
-            clientVersion: '2.20231201.00.00',
+            clientName: 'WEB',
+            clientVersion: '2.20240101.00.00',
             hl: 'id',
             gl: 'ID'
           }
@@ -58,21 +49,19 @@ app.get('/api/youtube/search', async (req, res) => {
       {
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         },
-        timeout: 5000
+        timeout: 6000
       }
     );
 
-    const contents = response.data?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents || [];
+    const sectionContents = response.data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
     
     let rawVideos = [];
-    for (const section of contents) {
+    for (const section of sectionContents) {
       const items = section?.itemSectionRenderer?.contents || [];
       for (const item of items) {
-        if (item.compactVideoRenderer) {
-          rawVideos.push(item.compactVideoRenderer);
-        } else if (item.videoRenderer) {
+        if (item.videoRenderer) {
           rawVideos.push(item.videoRenderer);
         }
       }
@@ -81,9 +70,9 @@ app.get('/api/youtube/search', async (req, res) => {
     const formattedSongs = rawVideos
       .map(video => {
         const videoId = video.videoId;
-        const title = video.title?.runs?.[0]?.text || video.title?.simpleText || 'Unknown Title';
-        const artist = video.longBylineText?.runs?.[0]?.text || video.shortBylineText?.runs?.[0]?.text || 'Unknown Artist';
-        const durationText = video.lengthText?.runs?.[0]?.text || video.lengthText?.simpleText || '0:00';
+        const title = video.title?.runs?.[0]?.text || 'Unknown Title';
+        const artist = video.ownerText?.runs?.[0]?.text || video.longBylineText?.runs?.[0]?.text || 'Unknown Artist';
+        const durationText = video.lengthText?.simpleText || video.lengthText?.runs?.[0]?.text || '0:00';
         const durationSec = parseDurationToSeconds(durationText);
 
         let coverUrl = video.thumbnail?.thumbnails?.[video.thumbnail.thumbnails.length - 1]?.url || '';
@@ -101,7 +90,7 @@ app.get('/api/youtube/search', async (req, res) => {
           cover_hd: coverUrl
         };
       })
-      .filter(song => song.id && song.duration_seconds > 45); // Filter shorts / preview < 45s
+      .filter(song => song.id && song.duration_seconds > 45); // Saring lagu di atas 45 detik
 
     return res.status(200).json({
       success: true,
@@ -224,7 +213,7 @@ app.get('/api/github/releases', async (req, res) => {
 
 // Root Endpoint
 app.get('/', (req, res) => {
-  return res.json({ status: 'Online', message: 'MusicValt API Unlimited Engine Running' });
+  return res.json({ status: 'Online', message: 'MusicValt API Fixed & Running' });
 });
 
 export default app;
