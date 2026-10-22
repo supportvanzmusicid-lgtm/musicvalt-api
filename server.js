@@ -9,15 +9,16 @@ let ytInstance = null;
 
 async function getYouTubeClient() {
   if (!ytInstance) {
-    // Menggunakan client default (WEB) agar yt.music.search berjalan mulus tanpa error 400
+    // Mengaktifkan retrieve_player agar player script terunduh untuk dekripsi audio full durasi
     ytInstance = await Innertube.create({
+      retrieve_player: true,
       cache: new UniversalCache(false)
     });
   }
   return ytInstance;
 }
 
-// Helper untuk memaksa cover / foto profil ke resolusi HD (1080p)
+// Helper untuk memaksa cover ke resolusi HD (1080p)
 function getHDCoverUrl(thumbnails) {
   if (!thumbnails || thumbnails.length === 0) return null;
   const lastThumb = thumbnails[thumbnails.length - 1];
@@ -34,7 +35,7 @@ function getHDCoverUrl(thumbnails) {
   return url;
 }
 
-// Helper untuk mengubah string durasi (contoh: "3:45") menjadi total detik
+// Helper untuk mengubah string durasi menjadi total detik
 function parseDurationToSeconds(durationText) {
   if (!durationText) return 0;
   const parts = durationText.split(':').map(Number);
@@ -43,7 +44,7 @@ function parseDurationToSeconds(durationText) {
   return 0;
 }
 
-// 1. Endpoint Search Lagu (Stabil dengan client default WEB)
+// 1. Endpoint Search Lagu
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -92,7 +93,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Audio Full Durasi
+// 2. Endpoint Stream Audio Full Durasi (Menggunakan chooseFormat & Decipher yang Aman)
 app.get('/api/youtube/stream', async (req, res) => {
   try {
     const videoId = req.query.id;
@@ -104,7 +105,7 @@ app.get('/api/youtube/stream', async (req, res) => {
 
     let info;
     try {
-      info = await yt.getBasicInfo(videoId);
+      info = await yt.getInfo(videoId);
     } catch (err) {
       return res.status(400).json({ 
         success: false, 
@@ -112,28 +113,32 @@ app.get('/api/youtube/stream', async (req, res) => {
       });
     }
 
-    const streamingData = info.streaming_data;
-    if (!streamingData || !streamingData.adaptive_formats) {
+    // Menggunakan chooseFormat bawaan youtubei.js untuk mendapatkan format audio terbaik
+    const format = info.chooseFormat({
+      type: 'audio',
+      quality: 'best'
+    });
+
+    if (!format) {
       return res.status(404).json({ success: false, message: 'Format audio tidak ditemukan' });
     }
 
-    // Ambil format audio saja dengan bitrate tertinggi
-    const audioFormats = streamingData.adaptive_formats
-      .filter(f => f.has_audio && !f.has_video)
-      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+    // Ekstrak URL (lakukan dekripsi signature jika diperlukan oleh player)
+    let streamUrl = format.url;
+    if (!streamUrl && typeof format.decipher === 'function' && yt.session && yt.session.player) {
+      streamUrl = format.decipher(yt.session.player);
+    }
 
-    const selectedFormat = audioFormats[0];
-
-    if (!selectedFormat || !selectedFormat.url) {
-      return res.status(404).json({ success: false, message: 'Direct stream URL tidak ditemukan' });
+    if (!streamUrl) {
+      return res.status(404).json({ success: false, message: 'Direct stream URL gagal didapatkan' });
     }
 
     return res.status(200).json({
       success: true,
       id: videoId,
-      stream_url: selectedFormat.url,
-      mime_type: selectedFormat.mime_type,
-      bitrate: selectedFormat.bitrate
+      stream_url: streamUrl,
+      mime_type: format.mime_type,
+      bitrate: format.bitrate
     });
   } catch (error) {
     console.error('Stream Error:', error);
