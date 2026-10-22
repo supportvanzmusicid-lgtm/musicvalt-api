@@ -17,7 +17,7 @@ async function getYouTubeClient() {
   return ytInstance;
 }
 
-// Route YouTube Music
+// Endpoint YouTube Search / Release Topic
 app.get('/api/youtube/search', async (req, res) => {
   try {
     const query = req.query.q || 'Official Release Topic';
@@ -35,7 +35,7 @@ app.get('/api/youtube/search', async (req, res) => {
   }
 });
 
-// Route GitHub
+// Endpoint GitHub Releases
 app.get('/api/github/releases', async (req, res) => {
   try {
     const owner = req.query.owner || 'octocat';
@@ -54,9 +54,9 @@ app.get('/api/github/releases', async (req, res) => {
   }
 });
 
-// Route Principale
+// Root Endpoint
 app.get('/', (req, res) => {
-  res.json({ status: 'Online', message: 'API MusicValt opérationnelle !' });
+  res.json({ status: 'Online', message: 'Vanz Music Backend API Running' });
 });
 
 export default app;
@@ -64,6 +64,6 @@ export default app;
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`Serveur démarré sur http://localhost:${PORT}`);
+    console.log(`Server running at http://localhost:${PORT}`);
   });
 }
